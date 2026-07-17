@@ -51,7 +51,8 @@ In normal mode, the broker reads a Bitwarden Secrets Manager access token from
 memory and are never placed in command arguments.
 
 See [DECISIONS.md](DECISIONS.md) for current architectural decisions and
-[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for implementation details.
+[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for implementation details. Current hosting and
+deployment facts are maintained in [docs/agents/state.md](docs/agents/state.md).
 
 ## Commands
 
@@ -73,6 +74,7 @@ See [DECISIONS.md](DECISIONS.md) for current architectural decisions and
 - `public/`: browser push-to-talk client with no build step or secrets
 - `test/`: Vitest unit tests and sanitised CLI fixtures
 - `docs/`: architecture and implementation documentation
+- `docs/agents/`: task-specific agent rules, operational state, and deployment playbooks
 
 ## Roadmap
 
