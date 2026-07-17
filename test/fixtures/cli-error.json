@@ -1,7 +1,0 @@
-{
-  "error": {
-    "code": "DAEMON_NOT_RUNNING",
-    "message": "Cannot connect to daemon at 127.0.0.1:6868: connect ECONNREFUSED 127.0.0.1:6767",
-    "details": "Start the daemon with: paseo daemon start\nFor a remote daemon, pass --host <host:port> or set PASEO_HOST."
-  }
-}

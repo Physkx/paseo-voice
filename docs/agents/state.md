@@ -6,16 +6,16 @@ validation facts change.
 
 ## Current phase
 
-| Item           | Current                                                                    |
-| -------------- | -------------------------------------------------------------------------- |
-| Phase          | Early alpha, reliable voice and agent-control foundation                   |
-| Broker         | Node.js service running beside the Paseo CLI                               |
-| Browser        | Secret-free static push-to-talk client served by the broker                |
-| Voice          | OpenAI Realtime when configured, text-only mock mode otherwise             |
-| Summaries      | Optional OpenAI-compatible local endpoint with cleaned-text fallback       |
-| Writes         | Two-phase proposal and explicit confirmation gate                          |
-| Rust           | Inert Phase 1 workspace; no runtime, secret, network, or Paseo capability  |
-| Active roadmap | Rust control plane, provenance-bound replies, summary queue, and dashboard |
+| Item           | Current                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| Phase          | Early alpha, reliable voice and agent-control foundation                 |
+| Broker         | Single Rust service running beside the Paseo CLI                         |
+| Browser        | Secret-free static push-to-talk client served by the broker              |
+| Voice          | OpenAI Realtime when configured, text-only mock mode otherwise           |
+| Summaries      | Optional OpenAI-compatible local endpoint with cleaned-text fallback     |
+| Writes         | Two-phase proposal and explicit confirmation gate                        |
+| Rust           | Production browser, Realtime, safety, secret, journal, and Paseo backend |
+| Active roadmap | Automatic completion detection, richer summary queue, and dashboard      |
 
 ## Hosting
 
@@ -27,7 +27,7 @@ validation facts change.
 | Deployment trigger | Git-driven Cloudflare Workers Builds from `main`                               |
 | Manual deployment  | Disabled by default; do not run `wrangler deploy`                              |
 | Web workspace      | Not selected yet; define its root and output directory when the GUI is created |
-| Node version       | 26, pinned by the repository                                                   |
+| Tooling Node       | 26, pinned by the repository                                                   |
 | Production DNS     | Not configured; changes require an explicit request                            |
 
 The future static GUI and the broker are separate deployment units. Cloudflare may host the static
@@ -59,9 +59,9 @@ exposure and use an explicit `PUBLIC_` prefix.
 | --------------------- | ------------------ | --------------------------------------- |
 | Full repository check | `pnpm check`       | Before every task push                  |
 | Agent document lint   | `pnpm lint:agents` | Agent rules, state, or playbooks change |
-| Focused unit tests    | `pnpm test`        | Runtime behavior or tests change        |
-| Production compile    | `pnpm build`       | TypeScript runtime changes              |
-| Rust workspace        | `pnpm rust:test`   | Rust control-plane changes              |
+| Focused tests         | `pnpm test`        | Runtime behavior or tests change        |
+| Production build      | `pnpm build`       | Rust runtime changes                    |
+| Rust workspace        | `pnpm rust:test`   | Rust backend changes                    |
 | Future web build      | To be defined      | Every future web workspace change       |
 
 No remote deployment verification is currently available because Cloudflare Workers Builds is not

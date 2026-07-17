@@ -19,7 +19,8 @@ Slim entry point for coding agents. Read only the documents the task router poin
 - Stage intentionally. Never use `git add -A`; add only the files changed for the task.
 - Before commit, confirm `main`, review `git status --short`, stage explicit paths, and inspect
   `git diff --cached --stat`.
-- Never commit secrets, `.env` values, local `paseo.json`, logs, transcripts, or generated `dist/`.
+- Never commit secrets, `.env` values, local `paseo.json`, logs, transcripts, generated `dist/`, or
+  generated `target/`.
 - If task changes cannot be isolated from unrelated worktree changes, stop and explain.
 
 ## Task router
@@ -34,7 +35,8 @@ Slim entry point for coding agents. Read only the documents the task router poin
 
 ## Stack and code rules
 
-- Use Node.js 26, strict TypeScript, ESM with NodeNext, pnpm, Vitest, Oxlint, and Prettier.
+- Use Rust 1.97 for the backend, safe Rust only, repository commands through pnpm, and plain
+  secret-free JavaScript for browser assets.
 - Preserve dependency injection for process, network, clock, and socket boundaries.
 - Never use a shell to invoke Paseo or Bitwarden commands.
 - Never log, serialise, or place secrets in command arguments.

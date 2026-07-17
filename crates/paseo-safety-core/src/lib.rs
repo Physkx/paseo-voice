@@ -152,6 +152,8 @@ pub enum SummaryState {
     Active,
     /// A confirmed proposal consumed the context.
     Consumed,
+    /// The caller explicitly moved away without sending a response.
+    Deferred,
 }
 
 /// Terminal result of a write attempt.
@@ -186,6 +188,8 @@ pub enum Command {
     },
     /// Activate the first ready summary when no context is active.
     ActivateNext,
+    /// Invalidate proposals and defer the active context.
+    DeferActive,
     /// Store an exact response proposal for the active summary.
     ProposeResponse {
         /// Caller-assigned proposal identity.
@@ -233,6 +237,8 @@ pub enum Applied {
     SummaryReady,
     /// A summary became active.
     SummaryActivated(SummaryId),
+    /// The active summary and any pending proposal were invalidated.
+    SummaryDeferred,
     /// A response proposal became pending.
     ResponseProposed,
     /// A pending response proposal was cancelled.
@@ -374,6 +380,7 @@ impl SafetyCore {
             ),
             Command::MarkSummaryReady { summary_id } => self.mark_summary_ready(&summary_id),
             Command::ActivateNext => self.activate_next(),
+            Command::DeferActive => self.defer_active(),
             Command::ProposeResponse {
                 proposal_id,
                 summary_id,
@@ -468,6 +475,31 @@ impl SafetyCore {
         summary.state = SummaryState::Active;
         self.active_summary = Some(summary_id.clone());
         Ok(Applied::SummaryActivated(summary_id))
+    }
+
+    fn defer_active(&mut self) -> Result<Applied, SafetyError> {
+        let summary_id = self
+            .active_summary
+            .take()
+            .ok_or(SafetyError::UnknownSummary)?;
+        let summary = self
+            .summaries
+            .get_mut(&summary_id)
+            .ok_or(SafetyError::UnknownSummary)?;
+        if summary.state != SummaryState::Active {
+            return Err(SafetyError::InvalidSummaryState);
+        }
+        summary.state = SummaryState::Deferred;
+        if let Some(proposal_id) = self.pending_by_summary.remove(&summary_id) {
+            let proposal = self
+                .proposals
+                .get_mut(&proposal_id)
+                .ok_or(SafetyError::UnknownProposal)?;
+            if proposal.state == ProposalState::Pending {
+                proposal.state = ProposalState::Cancelled;
+            }
+        }
+        Ok(Applied::SummaryDeferred)
     }
 
     fn propose_response(

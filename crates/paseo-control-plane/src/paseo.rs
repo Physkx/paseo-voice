@@ -10,6 +10,8 @@ use std::{
 use serde_json::Value;
 use wait_timeout::ChildExt as _;
 
+use paseo_safety_core::DispatchAuthorization;
+
 const MAX_PROCESS_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Captured output from a directly executed child process.
@@ -107,6 +109,30 @@ pub enum WriteResult {
     OutcomeUnknown,
 }
 
+/// Opaque confirmed new-run arguments. Only the control-plane gate can construct this value.
+pub struct RunAuthorization {
+    prompt: String,
+    provider: Option<String>,
+    cwd: Option<String>,
+    title: Option<String>,
+}
+
+impl RunAuthorization {
+    pub(crate) fn new(
+        prompt: String,
+        provider: Option<String>,
+        cwd: Option<String>,
+        title: Option<String>,
+    ) -> Self {
+        Self {
+            prompt,
+            provider,
+            cwd,
+            title,
+        }
+    }
+}
+
 /// Paseo adapter that holds the only write credential in memory.
 pub struct PaseoAdapter<E> {
     executor: E,
@@ -129,12 +155,12 @@ impl<E: ProcessExecutor> PaseoAdapter<E> {
 
     /// Send the exact confirmed response to its provenance-derived thread.
     #[must_use]
-    pub fn send_message(&self, thread_id: &str, response: &str) -> WriteResult {
+    pub fn send_message(&self, authorization: &DispatchAuthorization) -> WriteResult {
         let args = [
             "send".to_owned(),
-            thread_id.to_owned(),
+            authorization.destination_thread_id().as_str().to_owned(),
             "--prompt".to_owned(),
-            response.to_owned(),
+            authorization.response().as_str().to_owned(),
             "--no-wait".to_owned(),
             "--json".to_owned(),
         ];
@@ -148,8 +174,12 @@ impl<E: ProcessExecutor> PaseoAdapter<E> {
 
     /// List sessions as strict JSON rows.
     #[must_use]
-    pub fn list_sessions(&self) -> Option<Vec<Value>> {
-        let output = self.invoke(&["ls", "-g", "--json"], Duration::from_secs(20));
+    pub fn list_sessions(&self, include_archived: bool) -> Option<Vec<Value>> {
+        let output = if include_archived {
+            self.invoke(&["ls", "-a", "-g", "--json"], Duration::from_secs(20))
+        } else {
+            self.invoke(&["ls", "-g", "--json"], Duration::from_secs(20))
+        };
         if output.exit_code != Some(0) {
             return None;
         }
@@ -158,13 +188,57 @@ impl<E: ProcessExecutor> PaseoAdapter<E> {
 
     /// Read recent assistant output without parsing content as JSON.
     #[must_use]
-    pub fn read_log_text(&self, thread_id: &str, tail: usize) -> Option<String> {
+    pub fn read_log_text(&self, thread_id: &str, tail: usize, filter_text: bool) -> Option<String> {
         let tail = tail.min(200).to_string();
-        let output = self.invoke(
-            &["logs", thread_id, "--tail", &tail, "--filter", "text"],
-            Duration::from_secs(20),
-        );
+        let output = if filter_text {
+            self.invoke(
+                &["logs", thread_id, "--tail", &tail, "--filter", "text"],
+                Duration::from_secs(20),
+            )
+        } else {
+            self.invoke(
+                &["logs", thread_id, "--tail", &tail],
+                Duration::from_secs(20),
+            )
+        };
         (output.exit_code == Some(0)).then(|| output.stdout.trim().to_owned())
+    }
+
+    /// List pending permission requests for narration only.
+    #[must_use]
+    pub fn list_pending_permissions(&self) -> Option<Vec<Value>> {
+        let output = self.invoke(&["permit", "ls", "--json"], Duration::from_secs(20));
+        if output.exit_code != Some(0) {
+            return None;
+        }
+        serde_json::from_str::<Vec<Value>>(&output.stdout).ok()
+    }
+
+    /// Start a confirmed detached run with exact stored arguments.
+    #[must_use]
+    pub fn start_run(&self, authorization: &RunAuthorization) -> WriteResult {
+        let mut args = vec![
+            "run".to_owned(),
+            authorization.prompt.clone(),
+            "--detach".to_owned(),
+        ];
+        if let Some(provider) = &authorization.provider {
+            args.extend(["--provider".to_owned(), provider.to_owned()]);
+        }
+        if let Some(cwd) = &authorization.cwd {
+            let cwd = expand_home(cwd).unwrap_or_else(|| cwd.to_owned());
+            args.extend(["--cwd".to_owned(), cwd]);
+        }
+        if let Some(title) = &authorization.title {
+            args.extend(["--title".to_owned(), title.to_owned()]);
+        }
+        args.push("--json".to_owned());
+        classify_write(&self.executor.execute(
+            &self.binary,
+            &args,
+            &self.child_environment(),
+            Duration::from_mins(1),
+        ))
     }
 
     fn invoke(&self, args: &[&str], timeout: Duration) -> ProcessOutput {
@@ -185,6 +259,15 @@ impl<E: ProcessExecutor> PaseoAdapter<E> {
         }
         env
     }
+}
+
+fn expand_home(path: &str) -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    if path == "~" {
+        return Some(home);
+    }
+    path.strip_prefix("~/")
+        .map(|suffix| format!("{home}/{suffix}"))
 }
 
 fn classify_write(output: &ProcessOutput) -> WriteResult {

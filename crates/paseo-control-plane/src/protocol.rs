@@ -91,6 +91,8 @@ pub enum Operation {
     },
     /// Activate the oldest ready summary.
     ActivateNext,
+    /// Defer the active context and invalidate its proposal.
+    DeferActive,
     /// Store an exact response for the active summary.
     ProposeResponse {
         /// Proposal identity.
@@ -335,7 +337,7 @@ fn operation_fields_are_exact(fields: &serde_json::Map<String, Value>) -> bool {
         return false;
     };
     let allowed: &[&str] = match operation {
-        "health" | "activate_next" => &["op"],
+        "health" | "activate_next" | "defer_active" => &["op"],
         "mark_summary_ready" => &["op", "summary_id"],
         "cancel_response" => &["op", "proposal_id"],
         "observe_reply" => &[
@@ -404,6 +406,7 @@ fn operation_to_command(operation: Operation) -> Result<Command, CommandError> {
             summary_id: SummaryId::new(summary_id).map_err(validation)?,
         }),
         Operation::ActivateNext => Ok(Command::ActivateNext),
+        Operation::DeferActive => Ok(Command::DeferActive),
         Operation::ProposeResponse {
             proposal_id,
             summary_id,
@@ -447,6 +450,7 @@ fn applied_to_value(applied: Applied) -> Value {
         Applied::SummaryActivated(summary_id) => {
             json!({ "status": "summary_activated", "summary_id": summary_id.as_str() })
         }
+        Applied::SummaryDeferred => json!({ "status": "summary_deferred" }),
         Applied::ResponseProposed => json!({ "status": "response_proposed" }),
         Applied::ResponseCancelled => json!({ "status": "response_cancelled" }),
         Applied::DispatchAuthorized(authorization) => json!({

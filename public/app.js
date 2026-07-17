@@ -4,7 +4,8 @@
  *
  * Wire protocol to the broker (/ws):
  * - client -> broker: binary = pcm16 24 kHz mono mic audio (while PTT held);
- *   JSON text = {type: "hello" | "ptt_start" | "ptt_end" | "text_turn"}
+ *   JSON text = {type: "hello" | "ptt_start" | "ptt_end" | "text_turn" |
+ *   "confirm_proposal" | "cancel_proposal"}
  * - broker -> client: binary = pcm16 24 kHz assistant audio; JSON text =
  *   state / transcript_delta / transcript_done / user_transcript / tool /
  *   proposal / flush_audio / error / mode
@@ -243,6 +244,18 @@ $("text-form").addEventListener("submit", (event) => {
   addTranscript("user", text);
   socket.send(JSON.stringify({ type: "text_turn", text }));
   input.value = "";
+});
+
+$("confirm-proposal").addEventListener("click", () => {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "confirm_proposal" }));
+  }
+});
+
+$("cancel-proposal").addEventListener("click", () => {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "cancel_proposal" }));
+  }
 });
 
 connect();

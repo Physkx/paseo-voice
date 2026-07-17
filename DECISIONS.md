@@ -46,26 +46,46 @@ unavailable, the broker reads a cleaned tail of the original reply.
 When no OpenAI key resolves, the broker runs a text-only mock realtime loop. Mock mode exercises
 the same dispatcher and confirmation gate as realtime mode.
 
+## Host profiles and session creation
+
+This section records the planned host-profile design. It is not implemented by the current alpha.
+
+Paseo daemon targets are explicit broker-side host profiles, not free-form browser or voice input.
+Each profile has a stable ID, display label, daemon target, default working directory, and default
+provider/model. Exactly one profile may be the default. The browser receives only safe display
+metadata and availability, while daemon targets and the shared alpha-stage Paseo credential remain
+in the broker. Per-profile credentials are deferred.
+
+Host selection belongs to one browser connection and resets to the configured default on
+reconnect. The selection applies to every Paseo operation. Changing it invalidates the current
+session, drafts, pending proposals, and confirmation tokens. An unavailable host or provider/model
+fails explicitly without automatic fallback or substitution.
+
+The spoken phrase "new session" begins intent collection and asks for the task. The model-facing
+`create_session` tool accepts only that task. Trusted broker state supplies the selected profile's
+host, working directory, and provider/model. Paths such as `~/` pass unchanged for expansion by the
+selected daemon. The proposal readback includes all resolved settings and requires a later explicit
+confirmation. Alpha omits title collection.
+
+Successful creation requires a validated Paseo `agentId`, which becomes the current session. An
+ambiguous result is reported as outcome unknown and reconciled through a session refresh without
+guessing the created session.
+
 ## Package publishing
 
 The repository is open source under MIT, but the package remains marked `private` to prevent
 accidental npm publication while the project is early alpha.
 
-## Privileged Rust control plane
+## Privileged Rust backend
 
-The backend will migrate in phases to a privileged Rust control-plane process. Rust will own reply
-provenance, the ordered summary queue, proposal and confirmation state, delivery identifiers,
-recovery metadata, the Paseo credential, and the only Paseo write path.
+The phased migration is complete. One Rust process owns the browser server, audio and OpenAI
+Realtime bridge, summarisation, reply provenance, ordered summary queue, proposal and confirmation
+state, recovery metadata, secret resolution, the Paseo credential, and the only Paseo write path.
+Browser assets remain plain secret-free JavaScript. Node.js is tooling only.
 
-The TypeScript broker remains the browser, audio, and OpenAI Realtime adapter during the migration.
-The Rust control plane runs out of process and exposes a narrow local interface. It is not a native
-Node.js addon. Proposal and confirmation calls do not accept a destination thread; the control
-plane derives the destination from an immutable summary context that it already owns.
-
-Migration is incremental. The Rust decision engine must first run in shadow mode against the
-existing TypeScript behavior. Credential and write authority move only after the safety contract,
-cross-thread routing tests, concurrency tests, and crash-recovery tests pass. After cutover, the
-TypeScript process must have no Paseo write credential and no alternate write path.
+Response proposal and confirmation calls cannot accept a destination thread. Rust derives the
+destination from the immutable summary context created when the reply was read. The removed
+TypeScript backend remains available only through Git history and cannot be selected at runtime.
 
 Exactly-once delivery requires a receiver-recognised idempotency identifier and an authoritative
 delivery receipt. Rust alone does not provide that guarantee. Until the supported Paseo CLI can
@@ -76,7 +96,8 @@ See `docs/RUST_CONTROL_PLANE_PLAN.md` for sequencing, acceptance gates, and roll
 
 ## Deferred work
 
-- Selecting among multiple remote Paseo daemons
+- Per-profile Paseo credentials
+- Editable provider/model and working-directory selectors for new sessions
 - Packaging the tool surface as an MCP server
 - Phone and PWA polish
 - Voice activity detection and wake-word modes

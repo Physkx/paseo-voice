@@ -10,33 +10,23 @@
     "node": ">=26"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "pnpm format:check && pnpm lint:agents && pnpm lint && pnpm rust:lint && pnpm typecheck && pnpm test && pnpm rust:test && pnpm build && pnpm rust:build",
+    "build": "pnpm rust:build",
+    "check": "pnpm format:check && pnpm lint:agents && pnpm lint && pnpm rust:lint && pnpm rust:test && pnpm rust:build",
     "format": "prettier --write . && pnpm rust:format",
     "format:check": "prettier --check . && pnpm rust:format:check",
-    "lint": "oxlint src test public",
+    "lint": "oxlint public scripts",
     "lint:agents": "node scripts/lint-agents.mjs",
     "rust:build": "cargo build --workspace --release",
     "rust:format": "cargo fmt --all",
     "rust:format:check": "cargo fmt --all -- --check",
     "rust:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     "rust:test": "cargo test --workspace --all-targets --all-features",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "start": "node dist/index.js",
-    "console": "node dist/console.js"
-  },
-  "dependencies": {
-    "ws": "^8.21.1",
-    "zod": "^4.4.3"
+    "test": "pnpm rust:test",
+    "start": "cargo run --release -p paseo-control-plane -- serve",
+    "console": "cargo run --release -p paseo-control-plane -- console"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
-    "@types/ws": "^8.18.1",
     "oxlint": "^1.74.0",
-    "prettier": "3.9.5",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "prettier": "3.9.5"
   }
 }

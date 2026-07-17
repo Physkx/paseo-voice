@@ -4,9 +4,9 @@ Paseo Voice is early alpha. Small, focused pull requests with tests are the easi
 
 ## Development setup
 
-Use Node.js 26, the pnpm version declared in `package.json`, and Rust through `rustup`. The
-repository pins the exact Rust release and required rustfmt and Clippy components in
-`rust-toolchain.toml`.
+Use Node.js 26 and the pnpm version declared in `package.json` for tooling, and Rust through
+`rustup` for the application. The repository pins the exact Rust release and required rustfmt and
+Clippy components in `rust-toolchain.toml`.
 
 ```bash
 corepack enable
@@ -29,7 +29,8 @@ summariser services.
 
 ## Making changes
 
-- Keep TypeScript strict and preserve dependency injection at process and network boundaries.
+- Keep browser JavaScript secret-free and preserve dependency injection at process and network
+  boundaries.
 - Keep Rust free of unsafe code and preserve the pure safety-core module boundary.
 - Declare shared third-party Rust dependencies in the root `[workspace.dependencies]` table and
   inherit them from member crates.
@@ -53,10 +54,10 @@ that could not be automated.
 ## Commit guidance
 
 Use short imperative subjects. Keep refactors separate from behavior changes when practical. Do not
-include generated `dist/` output, local configuration, or secrets.
+include generated `dist/` or `target/` output, local configuration, or secrets.
 
 ## Reporting problems
 
-Open a GitHub issue with reproduction steps, expected behavior, actual behavior, Node and pnpm
-versions, and relevant redacted logs. Do not include API keys, passwords, secret IDs, or private
-infrastructure details.
+Open a GitHub issue with reproduction steps, expected behavior, actual behavior, Rust, Node, and
+pnpm versions, and relevant redacted logs. Do not include API keys, passwords, secret IDs, or
+private infrastructure details.

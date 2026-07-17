@@ -2,18 +2,18 @@
 
 ## Status
 
-Architectural direction approved. Phases 0 through 3 are implemented. Rust owns the tested pure
-safety state and an opt-in unprivileged stdio protocol, but it is not started by production. No
-credential movement, write-path change, persistence, or deployment change has been made.
+Phases 0 through 8 are implemented. Production commands start one Rust backend. The TypeScript
+backend and its dependencies are removed. Browser JavaScript remains secret-free, and no
+deployment, DNS, binding, or external secret change was made.
 
 ## Problem statement
 
 Paseo Voice must guarantee that a response created for one agent reply cannot be proposed,
-confirmed, or delivered to another agent thread. The current TypeScript broker freezes a resolved
-session ID inside a proposal and prevents a proposal token from invoking the CLI twice in one
-process lifetime. It does not yet bind the response to the reply that produced its summary, enforce
-that confirmation happens in a later user interaction, recover delivery state after a crash, or
-distinguish a confirmed failure from an ambiguous delivery outcome.
+confirmed, or delivered to another agent thread. Before this migration, the TypeScript broker
+froze a resolved session ID inside a proposal and prevented a proposal token from invoking the CLI
+twice in one process lifetime. It did not bind the response to the reply that produced its summary,
+enforce that confirmation happened in a later user interaction, recover delivery state after a
+crash, or distinguish a confirmed failure from an ambiguous delivery outcome.
 
 The goal is not a performance rewrite. The goal is a deep safety module whose small interface makes
 wrong-thread delivery, destination substitution, invalid state transitions, and unsafe retries
@@ -25,14 +25,9 @@ difficult or impossible for callers to express.
 Secret-free browser
   |
   v
-TypeScript voice adapter
+Privileged Rust backend
   - browser WebSocket and audio
-  - OpenAI Realtime connection
-  - presentation events
-  |
-  | versioned local IPC
-  v
-Privileged Rust control plane
+  - OpenAI Realtime and local summarisation
   - reply observation and immutable provenance
   - ordered summary queue
   - proposal and confirmation state machine
@@ -43,10 +38,9 @@ Privileged Rust control plane
 Supported Paseo CLI
 ```
 
-The Rust process is the only production process allowed to execute Paseo writes after cutover. The
-TypeScript process treats control-plane handles and results as opaque. Browser labels, model tool
-arguments, session titles, response text, and spoken echoes are untrusted inputs and can never
-select or replace a destination.
+The Rust process is the only production backend and the only process allowed to execute Paseo
+writes. Browser labels, model tool arguments, session titles, response text, and spoken echoes are
+untrusted inputs and can never select or replace a destination.
 
 ## Safety contract
 
@@ -100,8 +94,8 @@ inputs so state transitions are deterministic and property-testable.
 resolution, and Paseo process execution. Adapter interfaces remain internal to this executable
 unless two production implementations genuinely require an external seam.
 
-The repository remains a pnpm workspace. Cargo commands are added alongside the existing Node.js
-checks rather than replacing them.
+The repository remains a pnpm workspace for consistent developer commands. Cargo now performs all
+backend build, lint, and test work; Node.js remains only for browser and documentation tooling.
 
 ## Proposed control-plane interface
 
@@ -285,7 +279,9 @@ Status: Rust authority is implemented in the safety core and strict protocol. So
 reply provenance are immutable, completion pairs are deduplicated, ordering is assigned at broker
 observation, one context is active, and proposal and confirmation messages cannot contain a
 destination. Final browser presentation wiring occurs in the single-process Rust cutover, avoiding
-an intermediate production authority split that would immediately be removed.
+an intermediate production authority split that would immediately be removed. This replacement
+keeps the queue scoped to one browser connection, matching the previous one-session-per-client
+runtime. A process-wide automatic completion observer remains separate roadmap work under D019.
 
 Goal: make Rust authoritative for reply observation, immutable summary contexts, the ordered queue,
 and response proposal construction while TypeScript remains authoritative for actual Paseo writes.
@@ -315,6 +311,11 @@ Status: the Rust-only direct process adapter, credential environment isolation, 
 timeout classification, receipt validation, and failure-injection tests are implemented. Successful
 exit without a validated receiver message ID is `outcome_unknown`. Production authority moves only
 with the Phase 8 entry-point cutover, so no dual write mode is introduced.
+
+The live read-only smoke passed on 2026-07-18 against the existing private local Paseo 0.1.107
+daemon. The release Rust console resolved its credential through Bitwarden, listed sessions through
+the injected direct-process adapter, and disclosed neither session data nor secret values in the
+test output. No live write was attempted. Automated failure and write-path coverage uses fakes.
 
 Goal: make the Rust process the only production write path.
 
@@ -375,12 +376,35 @@ Rollback: disable recovery-driven retries and retain fail-closed status reportin
 
 ### Phase 8: Decide whether to complete a Rust backend migration
 
+Status: completed. Reliability and maintenance locality improved because the browser lifecycle,
+Realtime call deduplication, provenance, confirmation, credential, journal, and write adapter now
+share one Rust owner. Protocol churn is limited to the external browser and Realtime wires; the
+stdio protocol remains a tested diagnostic harness rather than a production process boundary.
+Release builds produce one binary, structured browser errors remain bounded, and rollback is the
+last validated TypeScript commit in Git history rather than a dual-authority runtime switch.
+
 Goal: evaluate moving browser WebSocket, OpenAI Realtime, summarisation, and read-only Paseo adapters
 after the safety control plane has proven stable.
 
 This is a new decision, not an automatic continuation. A full migration is justified only if it
 reduces interface complexity, duplicated lifecycle handling, or operational failure modes. Browser
 assets remain JavaScript regardless.
+
+Implemented comparison:
+
+| Factor               | Rust backend selected                                                                | Permanent TypeScript adapter rejected                                           |
+| -------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Reliability          | One state owner covers Realtime calls, provenance, confirmation, journal, and writes | Cross-process failure and duplicated authority remain                           |
+| Maintenance locality | Safety transitions and all privileged adapters share one workspace and type system   | Safety changes require coordinated TypeScript and Rust protocol updates         |
+| Protocol churn       | Only browser, Realtime, summariser, and Paseo external wires remain                  | A permanent private IPC protocol becomes another compatibility surface          |
+| Binary packaging     | One release binary plus static browser assets                                        | Node runtime, installed packages, Rust child, and supervision remain            |
+| Observability        | Bounded browser errors and one content-free SQLite transition journal                | Events and failures are split across two processes                              |
+| Rollback             | Rebuild the last validated TypeScript-only Git revision                              | A runtime authority switch risks two write paths and is therefore not permitted |
+
+The Rust option wins on the primary safety objective because the only public Paseo write methods
+require opaque authorizations produced by the confirmation gate. The tradeoff is a larger Rust
+dependency graph and direct ownership of evolving Realtime events. D010 and D016 record those
+choices for final review.
 
 Exit gate:
 
@@ -399,15 +423,14 @@ Required suites:
 - Example-based transition tests for every legal and illegal state change.
 - Property tests for arbitrary sequences, expiration boundaries, and identifier reuse.
 - Concurrency tests for competing proposals, confirmations, cancellation, and replay.
-- Shared IPC contract fixtures for TypeScript and Rust.
+- Retained IPC contract fixtures and Rust replay tests from the migration boundary.
 - End-to-end cross-thread tests with at least two simultaneous agent replies.
 - Fault-injection tests for process timeout, exit, malformed output, disconnect, and restart.
 - Unicode, multiline, whitespace, maximum-size, and NUL input tests.
 - Metadata-retention tests proving response and transcript content are not persisted.
 
-Existing Vitest dependency injection in `test/gate.test.ts`, `test/tools.test.ts`,
-`test/paseo.test.ts`, and `test/realtime.test.ts` is the prior art for adapter replacement and
-observable assertions.
+Rust tests use injected process boundaries, fake Realtime and browser WebSockets, temporary
+journals, property generation, and public safety-core commands for observable assertions.
 
 ## Toolchain and dependency policy
 

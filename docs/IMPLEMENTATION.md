@@ -3,109 +3,98 @@
 ## Architecture
 
 ```text
-Browser PTT client
-  | PCM16 audio and JSON control frames over WebSocket
+Secret-free browser
+  | local HTTP and WebSocket
   v
-Local Paseo Voice broker
+Rust paseo-control-plane
   | OpenAI Realtime WebSocket
-  | paseo CLI child processes
-  | OpenAI-compatible summariser endpoint
+  | direct paseo, bws, or op child processes
+  | OpenAI-compatible summariser HTTP
+  | content-free SQLite metadata journal
   v
 Coding-agent sessions
 ```
 
-The Rust workspace now contains the pure safety state machine and a strict version 1 local
-protocol. `paseo-control-plane --serve-stdio` serves bounded length-delimited JSON on inherited
-stdin and stdout until clean EOF. It opens no socket, owns no credential, performs no Paseo I/O,
-and is not started by the production Node.js broker. The current runtime remains Node.js until the
-later cutover gates pass.
+The production backend is one Rust process. Browser assets under `public/` remain plain
+JavaScript and contain no credentials. Node.js and pnpm are repository tooling only. There is no
+production TypeScript backend, credential owner, confirmation gate, or alternate Paseo write path.
 
-Every request has a validated request ID. Identical request bytes replay the exact original
-response. Reusing an ID for different bytes returns `request_id_conflict`. Unknown versions,
-operations, fields, enum variants, duplicate fields, truncated frames, oversized frames, and
-trailing bytes fail closed. The shared fixtures are in `docs/RUST_PROTOCOL_FIXTURES.json`.
+## Runtime commands
 
-Realtime function-call IDs are also single-use. A repeated
-`response.function_call_arguments.done` event is ignored before tool dispatch, so reconnect or
-provider replay cannot duplicate a proposal or write transition.
+`paseo-control-plane serve` serves the browser, health endpoint, and browser WebSocket.
+`paseo-control-plane console` opens the deterministic text interface over the same Rust tool
+engine. `--serve-stdio` remains as the strict migration-protocol harness and is not used by the
+production runtime.
 
-The Rust Paseo adapter executes the configured binary directly with bounded output and a deadline.
-The password exists only in the child environment. A zero exit code counts as delivered only when
-strict JSON contains a valid receiver message ID; otherwise the result is `outcome_unknown` and is
-not retried. The `SQLite` recovery journal stores identifiers, response hashes, timestamps, states,
-and optional receiver IDs only. It has no content column.
+Production composition constructs and injects the listening socket, monotonic clock, HTTP client,
+Realtime WebSocket connector, and process executor. Tests replace or isolate these boundaries with
+fakes, loopback listeners, and temporary state.
 
-The browser is a secret-free audio terminal. The broker owns configuration, secret resolution,
-session selection, tool dispatch, and confirmation state. Each browser connection gets its own
-realtime session, dispatcher state, and proposal store.
+Each browser connection owns its own selection, trusted interaction sequence, summary context, and
+pending proposal state. OpenAI Realtime function-call IDs are single-use. Binary browser frames are
+PCM16 audio at 24 kHz. Starting a turn cancels active playback, and releasing push-to-talk commits
+the input buffer. Browser WebSocket upgrades with an `Origin` header must match the HTTP `Host`;
+cross-origin browser connections fail with HTTP 403.
 
 ## Configuration and secrets
 
-`src/config.ts` validates configuration with Zod. Precedence is:
+Rust validates the optional JSON configuration and then applies `PASEO_VOICE_*` environment
+overrides. The default file is `~/.config/paseo-voice/config.json`.
 
-1. `PASEO_VOICE_*` environment variables
-2. `$PASEO_VOICE_CONFIG` or `~/.config/paseo-voice/config.json`
-3. portable defaults
+The selected startup provider is Bitwarden, 1Password, or environment. Secret values are resolved
+once, retained only in memory, omitted from logs and arguments, and supplied to Paseo only through
+the child environment. Secret-manager programs and Paseo are invoked directly without a shell,
+with bounded output and deadlines.
 
-`src/secrets.ts` supports three providers:
+A missing OpenAI key selects mock mode. A missing Paseo password keeps tools unavailable without
+preventing the browser server from starting.
 
-- The `bitwarden` provider parses `BWS_ACCESS_TOKEN` from the configured bws environment file and
-  invokes `bws secret get` for configured secret IDs.
-- The `onepassword` provider invokes `op read --format json` sequentially for configured `op://`
-  references. The child inherits the process environment so the CLI can use desktop-app
-  integration or `OP_SERVICE_ACCOUNT_TOKEN`. Each read has a 20-second timeout.
-- The `environment` provider reads `OPENAI_API_KEY` and `PASEO_PASSWORD` from the process
-  environment. Empty values count as missing.
+## Provenance and confirmation
 
-The provider is selected once per process by `secretProvider` or
-`PASEO_VOICE_SECRET_PROVIDER`. Bitwarden is the default. `devMode` and `PASEO_VOICE_DEV` were
-removed and produce migration errors directing users to the environment provider.
+`paseo-safety-core` is pure and has no I/O dependencies. It owns validated identifiers, exact
+response bytes, immutable source provenance, deterministic queue order, proposal expiry,
+later-interaction confirmation, cancellation, dispatch, and delivery states.
 
-Missing OpenAI credentials select mock mode. Missing Paseo credentials replace the live client
-with an unavailable stub that returns a clear tool error. Resolution is independent and best
-effort for each secret. 1Password failures log only the provider, secret role, sanitized error
-category, and numeric exit code when available.
+Reading a reply creates the only actionable summary context. `send_message` accepts response text
+only and cannot accept a session or destination. Confirmation accepts only the proposal handle.
+The destination supplied to the Paseo adapter is derived from the source thread stored in the
+summary context. Selecting or reading another context invalidates the previous draft and proposal.
 
-## Paseo adapter
+`start_run` uses the same later-interaction, expiry, single-use, exact-argument, and journal-before-
+dispatch rules. Paseo permission requests can be narrated but never approved by voice.
 
-`src/paseo.ts` invokes the Paseo CLI with `execFile`, never a shell. `PASEO_PASSWORD` and an
-optional `PASEO_HOST` are passed through the child environment. Output parsing is intentionally
-tolerant because CLI response shapes may evolve.
+## Delivery and recovery
 
-Read operations include listing sessions, reading logs, inspection, and listing pending
-permissions. Write operations include sending messages and starting detached runs.
+The Paseo adapter reports `delivered` only when successful JSON contains a validated receiver
+message ID. A structured rejection before acceptance is `rejected`. Timeout, malformed output,
+missing receipt, or uncertain completion is `outcome_unknown` and is never retried automatically.
 
-## Confirmation gate
+Before a child write starts, Rust appends a `dispatching` metadata transition. The journal stores
+only opaque operation, summary, source or destination identifiers, SHA-256 digests, timestamps,
+states, and optional receiver IDs. It has no transcript, summary text, response body, prompt,
+credential, or agent-output column. The journal file is mode 0600 and its directory mode 0700 on
+Unix. Restart recovery maps `dispatching` to `outcome_unknown` and invalidates `pending`; it
+never constructs a fresh send. The read-only `get_operation_status` tool queries the journal by
+opaque operation ID. Retention is bounded to the latest 10,000 metadata transitions.
 
-`src/gate.ts` is the hard safety boundary for writes. Tool calls first create a proposal containing
-an opaque random token, payload, spoken echo, and expiration time. Confirmation consumes the exact
-stored payload. Unknown, expired, replaced, cancelled, and reused tokens cannot execute writes.
+Paseo 0.1.107 does not expose caller-supplied write idempotency IDs, so the application does not
+claim exactly-once delivery.
 
-Model instructions reinforce this policy but are not trusted to enforce it.
+## Local protocol
 
-## Realtime and mock modes
-
-`src/realtime.ts` connects one OpenAI Realtime session per browser connection. Push-to-talk release
-commits the input buffer and requests a response. Starting another turn cancels the active response
-and flushes client playback.
-
-`src/mock-realtime.ts` provides a text command loop over the same dispatcher for development
-without OpenAI credentials or audio hardware.
-
-## Browser client
-
-The static client under `public/` captures mono microphone audio, downsamples to PCM16 at 24 kHz,
-and sends binary WebSocket frames while push-to-talk is held. Separate AudioWorklets handle capture
-and playback. JSON frames carry status, transcript, tool, proposal, and playback-control events.
+The retained version 1 stdio protocol uses a four-byte big-endian length followed by at most
+131,072 bytes of strict JSON. Unknown versions, fields, variants, duplicate fields, malformed,
+truncated, oversized, or trailing input fail closed. Identical request bytes replay the exact
+response; conflicting reuse of a request ID is rejected. Shared fixtures live in
+`docs/RUST_PROTOCOL_FIXTURES.json`.
 
 ## Verification
-
-The required local and CI check is:
 
 ```bash
 pnpm check
 ```
 
-This verifies Prettier, rustfmt, agent-document lint, Oxlint, Clippy, strict TypeScript compilation,
-Vitest, Cargo tests, and TypeScript and Rust production builds. Tests use injected process, network,
-time, and socket dependencies so they do not require live services.
+This runs Prettier, rustfmt, agent-document lint, browser JavaScript lint, Clippy, all Cargo tests,
+and the release build. Tests cover the safety state machine, property-generated confirmation
+replay, concurrency, strict protocol framing, secret providers, process failure classification,
+journal recovery, mock browser runtime, and an end-to-end fake Realtime WebSocket.

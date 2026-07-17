@@ -8,9 +8,8 @@ The project is early alpha. Interfaces and configuration may change between comm
 
 ## Requirements
 
-- Node.js 26 or newer
-- pnpm 11.13.1
-- Rust 1.97.0 through `rustup` for control-plane development and repository checks
+- Node.js 26 or newer and pnpm 11.13.1 for repository tooling
+- Rust 1.97.0 through `rustup` for the application and repository checks
 - A working `paseo` CLI for live session operations
 - An OpenAI API key for realtime voice mode
 - An OpenAI-compatible chat-completions endpoint for optional reply summaries
@@ -123,14 +122,13 @@ pnpm build
 PASEO_VOICE_MOCK=1 pnpm start
 ```
 
-Confirm that startup reports `"secretProvider":"onepassword"`, does not report a
-`onepassword secret fetch failed` warning, and does not report that the Paseo password is
-unresolved. Stop the broker with Ctrl+C.
+Confirm that `/healthz` reports the expected mode and that Paseo tools work without exposing a
+secret value or reference. Stop the broker with Ctrl+C.
 
 To verify best-effort degradation, temporarily replace one local test reference with an unused
 `op://` reference and start the broker again. It should still start, report only the affected
-secret role and a sanitized error category, and never print the reference or secret output. Do
-not commit the local references or any secret values.
+capability as unavailable, and never print the reference or secret output. Do not commit the local
+references or any secret values.
 
 See [DECISIONS.md](DECISIONS.md) for current architectural decisions and
 [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for implementation details. Current hosting and
@@ -138,26 +136,24 @@ deployment facts are maintained in [docs/agents/state.md](docs/agents/state.md).
 
 ## Commands
 
-| Command           | Purpose                                           |
-| ----------------- | ------------------------------------------------- |
-| `pnpm build`      | Compile TypeScript into `dist/`                   |
-| `pnpm check`      | Run formatting, lint, typecheck, tests, and build |
-| `pnpm console`    | Open the text console after building              |
-| `pnpm format`     | Format tracked source and documentation           |
-| `pnpm lint`       | Run Oxlint                                        |
-| `pnpm rust:build` | Build the Rust workspace in release mode          |
-| `pnpm rust:lint`  | Run Clippy across the Rust workspace              |
-| `pnpm rust:test`  | Run all Rust tests                                |
-| `pnpm start`      | Start the compiled broker                         |
-| `pnpm test`       | Run the Vitest suite once                         |
-| `pnpm test:watch` | Run Vitest in watch mode                          |
-| `pnpm typecheck`  | Typecheck without emitting files                  |
+| Command           | Purpose                                             |
+| ----------------- | --------------------------------------------------- |
+| `pnpm build`      | Build the Rust workspace in release mode            |
+| `pnpm check`      | Run formatting, lint, Rust tests, and release build |
+| `pnpm console`    | Open the Rust text console                          |
+| `pnpm format`     | Format tracked source and documentation             |
+| `pnpm lint`       | Lint browser JavaScript and tooling                 |
+| `pnpm rust:build` | Build the Rust workspace in release mode            |
+| `pnpm rust:lint`  | Run Clippy across the Rust workspace                |
+| `pnpm rust:test`  | Run all Rust tests                                  |
+| `pnpm start`      | Start the Rust broker and browser                   |
+| `pnpm test`       | Run all Rust tests                                  |
 
 ## Project layout
 
-- `src/`: broker, Paseo adapter, confirmation gate, summariser, and realtime bridge
+- `crates/paseo-safety-core/`: pure provenance and confirmation state machine
+- `crates/paseo-control-plane/`: Rust runtime, adapters, protocol, and tests
 - `public/`: browser push-to-talk client with no build step or secrets
-- `test/`: Vitest unit tests and sanitised CLI fixtures
 - `docs/`: architecture and implementation documentation
 - `docs/agents/`: task-specific agent rules, operational state, and deployment playbooks
 
@@ -168,27 +164,23 @@ steering multiple coding-agent threads. It should announce short summaries as ag
 accept a spoken or typed response, and guarantee that the response can only be submitted to the
 thread that produced the summary.
 
-The approved backend direction is a privileged Rust control-plane process. It will own reply
-provenance, proposal and confirmation state, delivery identifiers, the Paseo credential, and the
-only Paseo write path. TypeScript remains an adapter only during migration. The final target is one
-Rust backend for browser WebSocket, audio forwarding, OpenAI Realtime, summarisation, secrets, and
-Paseo access. Browser assets remain JavaScript and Node.js remains repository tooling. See
-[docs/RUST_CONTROL_PLANE_PLAN.md](docs/RUST_CONTROL_PLANE_PLAN.md) for the implementation plan.
+The backend migration is complete. One privileged Rust process owns browser WebSocket and audio,
+OpenAI Realtime, summarisation, reply provenance, confirmation, recovery metadata, secrets, and
+the only Paseo write path. Browser assets remain JavaScript and Node.js remains repository tooling.
+See [docs/RUST_CONTROL_PLANE_PLAN.md](docs/RUST_CONTROL_PLANE_PLAN.md) for the phased record and
+[docs/RUST_DECISIONS_PENDING.md](docs/RUST_DECISIONS_PENDING.md) for choices retained for final
+review.
 
-### 1. Rust control-plane foundation
+### 1. Rust control-plane foundation - complete
 
-- Add a Cargo workspace with a pure safety-core crate and a separate control-plane executable.
-- Use a supervised Rust child during migration, then remove the process boundary with the
-  TypeScript backend at final cutover.
-- Define a narrow local interface where response proposals identify an immutable summary context,
+- Maintain a Cargo workspace with a pure safety-core crate and a control-plane executable.
+- Keep response proposals bound to an immutable summary context,
   never a caller-selected destination thread.
 - Model summary, proposal, confirmation, dispatch, and delivery states explicitly and reject
   invalid transitions.
-- Run the Rust decision engine in shadow mode before moving credentials or write authority.
-- Cut over only after property, concurrency, crash-recovery, and cross-thread routing tests pass.
-- Keep the existing TypeScript write path available only as a rollback during migration, never as
-  an independently selectable production path after cutover.
-- Remove the production TypeScript backend after Rust reaches browser and Realtime parity.
+- Preserve property, concurrency, crash-recovery, cross-thread routing, mock-runtime, and Realtime
+  integration tests.
+- Keep the removed TypeScript backend available only through Git history as rollback evidence.
 
 ### 2. Reliable real-time foundation
 
@@ -226,7 +218,37 @@ Paseo access. Browser assets remain JavaScript and Node.js remains repository to
 - Defer voice commands for skipping, replaying, deferring, or reprioritising summaries unless
   real-world use shows that short summaries alone are insufficient.
 
-### 5. Agent dashboard and talking avatar
+### 5. Voice-created sessions and host profiles
+
+- Treat "new session" as the start of a short creation flow. Ask what the session should work on,
+  then create a proposal rather than inventing a placeholder task or executing immediately.
+- Configure an explicit broker-side list of Paseo host profiles. Each profile has a stable ID,
+  display label, daemon target, default working directory, default provider/model, and at most one
+  profile is the default.
+- Keep daemon targets and credentials in the broker. Send only profile IDs, labels, and availability
+  to the secret-free browser. Alpha uses one shared Paseo credential across profiles, with
+  per-profile credentials deferred.
+- Show a persistent host dropdown near the current-session indicator. Host selection is scoped to
+  one browser connection, resets to the configured default after reconnect, and applies to listing,
+  reading, sending, and creating sessions.
+- Clear the current session, drafts, pending proposals, and confirmation tokens when the selected
+  host changes. Never preserve or retarget host-bound state across profiles.
+- Show the selected profile's working directory and provider/model as read-only values during the
+  alpha creation flow. Provider/model and directory selectors remain deferred.
+- Replace the model-facing `start_run` tool with `create_session`, accepting only the task prompt.
+  Resolve the selected host, working directory, and provider/model from trusted broker state.
+- Pass paths such as `~/` unchanged so the selected daemon expands them against its own home
+  directory. If the directory is missing, fail without falling back to another directory.
+- Validate the configured provider/model against the selected daemon before proposing creation.
+  Block unavailable profiles or providers explicitly, and never silently fail over or substitute a
+  host, provider, or model.
+- Read back the host label, working directory, provider/model, and task. Preserve the existing
+  later-turn confirmation gate, and omit explicit title collection for the alpha flow.
+- After confirmation, accept success only with a validated Paseo `agentId`, then make that session
+  current. Treat timeouts and malformed success output as outcome unknown, reconcile by refreshing
+  the session list, and never guess which session was created.
+
+### 6. Agent dashboard and talking avatar
 
 - Replace the audio-terminal layout with agent cards showing thread name, provider, live state,
   latest short summary, and queued-response count.
@@ -238,7 +260,7 @@ Paseo access. Browser assets remain JavaScript and Node.js remains repository to
 - Preserve a lightweight, secret-free browser client and responsive keyboard, pointer, and touch
   controls.
 
-### 6. Natural interruption and recovery
+### 7. Natural interruption and recovery
 
 - Support barge-in by stopping speech and playback as soon as the user starts talking.
 - Preserve the interrupted summary and its source context so it can be resumed or replayed without
@@ -247,7 +269,7 @@ Paseo access. Browser assets remain JavaScript and Node.js remains repository to
   a pending write.
 - Recover cleanly from microphone, audio, network, realtime API, summariser, and Paseo failures.
 
-### 7. Audited response timeline
+### 8. Audited response timeline
 
 - Maintain a searchable timeline of summaries and responses with source thread, destination
   thread, confirmation state, timestamps, and delivery result.

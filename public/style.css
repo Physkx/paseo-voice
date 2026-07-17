@@ -152,6 +152,21 @@ button:disabled {
   color: var(--warn);
 }
 
+.proposal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.proposal-actions button {
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
 #setup {
   display: flex;
   align-items: center;
