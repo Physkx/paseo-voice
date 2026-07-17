@@ -40,6 +40,7 @@ pub trait ProcessExecutor: Send + Sync {
 }
 
 /// Operating-system implementation using direct process execution.
+#[derive(Clone, Copy)]
 pub struct SystemProcessExecutor;
 
 impl ProcessExecutor for SystemProcessExecutor {
@@ -137,6 +138,42 @@ impl<E: ProcessExecutor> PaseoAdapter<E> {
             "--no-wait".to_owned(),
             "--json".to_owned(),
         ];
+        let env = self.child_environment();
+        classify_write(
+            &self
+                .executor
+                .execute(&self.binary, &args, &env, Duration::from_secs(20)),
+        )
+    }
+
+    /// List sessions as strict JSON rows.
+    #[must_use]
+    pub fn list_sessions(&self) -> Option<Vec<Value>> {
+        let output = self.invoke(&["ls", "-g", "--json"], Duration::from_secs(20));
+        if output.exit_code != Some(0) {
+            return None;
+        }
+        serde_json::from_str::<Vec<Value>>(&output.stdout).ok()
+    }
+
+    /// Read recent assistant output without parsing content as JSON.
+    #[must_use]
+    pub fn read_log_text(&self, thread_id: &str, tail: usize) -> Option<String> {
+        let tail = tail.min(200).to_string();
+        let output = self.invoke(
+            &["logs", thread_id, "--tail", &tail, "--filter", "text"],
+            Duration::from_secs(20),
+        );
+        (output.exit_code == Some(0)).then(|| output.stdout.trim().to_owned())
+    }
+
+    fn invoke(&self, args: &[&str], timeout: Duration) -> ProcessOutput {
+        let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let env = self.child_environment();
+        self.executor.execute(&self.binary, &args, &env, timeout)
+    }
+
+    fn child_environment(&self) -> HashMap<String, String> {
         let mut env = HashMap::from([("PASEO_PASSWORD".to_owned(), self.password.clone())]);
         for name in ["PATH", "HOME", "WSL_INTEROP", "WSLENV"] {
             if let Ok(value) = std::env::var(name) {
@@ -146,11 +183,7 @@ impl<E: ProcessExecutor> PaseoAdapter<E> {
         if let Some(host) = &self.host {
             env.insert("PASEO_HOST".to_owned(), host.clone());
         }
-        classify_write(
-            &self
-                .executor
-                .execute(&self.binary, &args, &env, Duration::from_secs(20)),
-        )
+        env
     }
 }
 

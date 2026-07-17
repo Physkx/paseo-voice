@@ -31,7 +31,7 @@ fn unsupported_arguments_fail_without_starting_a_runtime() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).expect("usage output should be UTF-8"),
-        "usage: paseo-control-plane --version | --serve-stdio\n",
+        "usage: paseo-control-plane --version | --serve-stdio | serve\n",
     );
 }
 
