@@ -10,6 +10,8 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+proptest = "1.11.0"
+sha2 = "0.11.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
