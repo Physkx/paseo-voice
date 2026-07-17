@@ -29,6 +29,12 @@ Realtime function-call IDs are also single-use. A repeated
 `response.function_call_arguments.done` event is ignored before tool dispatch, so reconnect or
 provider replay cannot duplicate a proposal or write transition.
 
+The Rust Paseo adapter executes the configured binary directly with bounded output and a deadline.
+The password exists only in the child environment. A zero exit code counts as delivered only when
+strict JSON contains a valid receiver message ID; otherwise the result is `outcome_unknown` and is
+not retried. The `SQLite` recovery journal stores identifiers, response hashes, timestamps, states,
+and optional receiver IDs only. It has no content column.
+
 The browser is a secret-free audio terminal. The broker owns configuration, secret resolution,
 session selection, tool dispatch, and confirmation state. Each browser connection gets its own
 realtime session, dispatcher state, and proposal store.

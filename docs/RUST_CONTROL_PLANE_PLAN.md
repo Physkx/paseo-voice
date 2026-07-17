@@ -311,6 +311,11 @@ place for diagnosis.
 
 ### Phase 6: Move Paseo write authority and credentials to Rust
 
+Status: the Rust-only direct process adapter, credential environment isolation, bounded output,
+timeout classification, receipt validation, and failure-injection tests are implemented. Successful
+exit without a validated receiver message ID is `outcome_unknown`. Production authority moves only
+with the Phase 8 entry-point cutover, so no dual write mode is introduced.
+
 Goal: make the Rust process the only production write path.
 
 Commits:
@@ -339,6 +344,11 @@ Rollback: deploy the last validated TypeScript-only build. Do not add a runtime 
 both write adapters in one build.
 
 ### Phase 7: Add receiver-recognised idempotency and recovery metadata
+
+Status: a content-free `SQLite` transition journal and conservative recovery are implemented.
+Recovered `dispatching` operations become `outcome_unknown`; recovered `pending` operations are
+invalidated, and neither produces a send. Paseo 0.1.107 has no caller-supplied message-ID option, so
+automatic retry remains disabled and exactly-once delivery is not claimed.
 
 Goal: make retry and crash recovery safe without overstating exactly-once guarantees.
 

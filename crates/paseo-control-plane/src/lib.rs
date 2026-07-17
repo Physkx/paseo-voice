@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod journal;
+pub mod paseo;
 pub mod protocol;
+pub mod secrets;
 
 /// Return the stable version line printed by the scaffold executable.
 #[must_use]
