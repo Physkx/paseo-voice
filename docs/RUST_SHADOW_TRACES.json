@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "traces": [
+    {
+      "name": "duplicate-reconnect-and-concurrent-summaries",
+      "steps": [
+        {
+          "request": {
+            "version": 1,
+            "request_id": "observe-a",
+            "op": "observe_reply",
+            "summary_id": "summary-a",
+            "source_thread_id": "thread-a",
+            "source_reply_id": "reply-a",
+            "observed_at_ms": 10
+          },
+          "expected_status": "reply_observed"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "observe-a-reconnect",
+            "op": "observe_reply",
+            "summary_id": "ignored-reconnect",
+            "source_thread_id": "thread-a",
+            "source_reply_id": "reply-a",
+            "observed_at_ms": 11
+          },
+          "expected_status": "duplicate_reply"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "observe-b",
+            "op": "observe_reply",
+            "summary_id": "summary-b",
+            "source_thread_id": "thread-b",
+            "source_reply_id": "reply-b",
+            "observed_at_ms": 12
+          },
+          "expected_status": "reply_observed"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "ready-b",
+            "op": "mark_summary_ready",
+            "summary_id": "summary-b"
+          },
+          "expected_status": "summary_ready"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "ready-a",
+            "op": "mark_summary_ready",
+            "summary_id": "summary-a"
+          },
+          "expected_status": "summary_ready"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "activate-a",
+            "op": "activate_next"
+          },
+          "expected_status": "summary_activated",
+          "expected_summary_id": "summary-a"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "propose-a",
+            "op": "propose_response",
+            "proposal_id": "proposal-a",
+            "summary_id": "summary-a",
+            "response": "  exact A\r\n",
+            "interaction": 40,
+            "now_ms": 100
+          },
+          "expected_status": "response_proposed"
+        },
+        {
+          "request": {
+            "version": 1,
+            "request_id": "confirm-a",
+            "op": "confirm_response",
+            "proposal_id": "proposal-a",
+            "interaction": 41,
+            "now_ms": 101
+          },
+          "expected_status": "dispatch_authorized",
+          "expected_destination_thread_id": "thread-a"
+        }
+      ]
+    }
+  ]
+}

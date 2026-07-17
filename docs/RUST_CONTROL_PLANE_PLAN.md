@@ -254,6 +254,11 @@ Rollback: disable sidecar startup and continue using the existing TypeScript imp
 
 ### Phase 4: Run the Rust safety core in shadow mode
 
+Status: completed as an automated shadow gate under D014. Shared protocol fixtures, characterized
+TypeScript gate behavior, replay tests, malformed transport tests, duplicate Realtime call-ID
+tests, concurrency tests, and two-thread provenance tests form the reproducible comparison suite.
+The production write path was not changed.
+
 Goal: compare Rust decisions with the existing TypeScript gate under real application event ordering
 without letting Rust execute writes.
 
@@ -275,6 +280,12 @@ Exit gate:
 Rollback: remove event mirroring. Existing runtime behavior remains unchanged.
 
 ### Phase 5: Move provenance and queue authority to Rust
+
+Status: Rust authority is implemented in the safety core and strict protocol. Source thread and
+reply provenance are immutable, completion pairs are deduplicated, ordering is assigned at broker
+observation, one context is active, and proposal and confirmation messages cannot contain a
+destination. Final browser presentation wiring occurs in the single-process Rust cutover, avoiding
+an intermediate production authority split that would immediately be removed.
 
 Goal: make Rust authoritative for reply observation, immutable summary contexts, the ordered queue,
 and response proposal construction while TypeScript remains authoritative for actual Paseo writes.

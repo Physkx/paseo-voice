@@ -25,6 +25,10 @@ response. Reusing an ID for different bytes returns `request_id_conflict`. Unkno
 operations, fields, enum variants, duplicate fields, truncated frames, oversized frames, and
 trailing bytes fail closed. The shared fixtures are in `docs/RUST_PROTOCOL_FIXTURES.json`.
 
+Realtime function-call IDs are also single-use. A repeated
+`response.function_call_arguments.done` event is ignored before tool dispatch, so reconnect or
+provider replay cannot duplicate a proposal or write transition.
+
 The browser is a secret-free audio terminal. The broker owns configuration, secret resolution,
 session selection, tool dispatch, and confirmation state. Each browser connection gets its own
 realtime session, dispatcher state, and proposal store.

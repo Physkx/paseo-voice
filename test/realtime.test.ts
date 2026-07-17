@@ -187,6 +187,22 @@ describe("createRealtimeSession", () => {
     expect(socket.sentOfType("response.create")).toHaveLength(1);
   });
 
+  it("dispatches a replayed function call ID only once", async () => {
+    const { socket, dispatched } = makeSession();
+    socket.open();
+    const replayed = {
+      type: "response.function_call_arguments.done",
+      call_id: "call-replayed",
+      name: "send_message",
+      arguments: '{"text":"exact"}',
+    };
+    socket.emit(replayed);
+    socket.emit(replayed);
+    await flushMicrotasks();
+    expect(dispatched).toEqual([{ name: "send_message", args: '{"text":"exact"}' }]);
+    expect(socket.sentOfType("conversation.item.create")).toHaveLength(1);
+  });
+
   it("barge-in: pttStart during active response cancels and flushes playback", () => {
     const { session, socket, recorded } = makeSession();
     socket.open();

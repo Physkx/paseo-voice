@@ -86,6 +86,8 @@ export function createRealtimeSession(options: RealtimeSessionOptions): Realtime
   let closedByUs = false;
   /** function_call item name lookup: call_id -> name, from output_item events. */
   const callNames = new Map<string, string>();
+  /** A Realtime call ID is dispatched once even if completion is replayed. */
+  const dispatchedCallIds = new Set<string>();
 
   const setState = (next: RealtimeState, detail?: string) => {
     if (state === next) return;
@@ -133,6 +135,11 @@ export function createRealtimeSession(options: RealtimeSessionOptions): Realtime
   };
 
   const handleFunctionCall = async (callId: string, name: string, argsJson: string) => {
+    if (dispatchedCallIds.has(callId)) {
+      log.warn("realtime: duplicate function call ignored", { callId });
+      return;
+    }
+    dispatchedCallIds.add(callId);
     callbacks.onToolCall(name);
     const result = await dispatcher.dispatch(name, argsJson);
     callbacks.onToolResult(name, result.ok);

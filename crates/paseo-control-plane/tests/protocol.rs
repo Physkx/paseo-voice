@@ -24,9 +24,34 @@ struct InvalidFixture {
     request: Value,
 }
 
+#[derive(Debug, Deserialize)]
+struct ShadowFixtures {
+    version: u16,
+    traces: Vec<ShadowTrace>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShadowTrace {
+    name: String,
+    steps: Vec<ShadowStep>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShadowStep {
+    request: Value,
+    expected_status: String,
+    expected_summary_id: Option<String>,
+    expected_destination_thread_id: Option<String>,
+}
+
 fn fixtures() -> Fixtures {
     serde_json::from_str(include_str!("../../../docs/RUST_PROTOCOL_FIXTURES.json"))
         .expect("valid shared fixtures")
+}
+
+fn shadow_fixtures() -> ShadowFixtures {
+    serde_json::from_str(include_str!("../../../docs/RUST_SHADOW_TRACES.json"))
+        .expect("valid sanitized shadow traces")
 }
 
 fn request(value: &Value) -> Vec<u8> {
@@ -168,4 +193,26 @@ fn protocol_never_accepts_a_destination_during_proposal_or_confirmation() {
         server.handle_frame(&request(&substituted)),
         Err(ProtocolError::InvalidRequest)
     );
+}
+
+#[test]
+fn sanitized_shadow_traces_have_no_decision_mismatches() {
+    let fixtures = shadow_fixtures();
+    assert_eq!(fixtures.version, PROTOCOL_VERSION);
+    for trace in fixtures.traces {
+        let mut server = ProtocolServer::new(120_000);
+        for step in trace.steps {
+            let framed = server
+                .handle_frame(&request(&step.request))
+                .unwrap_or_else(|error| panic!("{} failed: {error:?}", trace.name));
+            let result = &response(&framed)["result"];
+            assert_eq!(result["status"], step.expected_status, "{}", trace.name);
+            if let Some(summary_id) = step.expected_summary_id {
+                assert_eq!(result["summary_id"], summary_id, "{}", trace.name);
+            }
+            if let Some(thread_id) = step.expected_destination_thread_id {
+                assert_eq!(result["destination_thread_id"], thread_id, "{}", trace.name);
+            }
+        }
+    }
 }
