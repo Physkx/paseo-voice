@@ -4,8 +4,8 @@ import { z } from "zod";
 
 /**
  * Broker configuration. Precedence: environment variables, then the optional
- * JSON config file, then defaults. Secrets are NOT config: they are resolved
- * separately in secrets.ts and only ever held in memory.
+ * JSON config file, then defaults. Secret references are config, but secret
+ * values are resolved separately in secrets.ts and only ever held in memory.
  */
 const ConfigSchema = z.object({
   listenHost: z.string().default("127.0.0.1"),
@@ -24,8 +24,10 @@ const ConfigSchema = z.object({
   bwsEnvFile: z.string().default(join(homedir(), ".config", "bws.env")),
   bwsSecretIdOpenai: z.string().optional(),
   bwsSecretIdPaseo: z.string().optional(),
-  /** Dev mode: read secrets from process env instead of bws. */
-  devMode: z.boolean().default(false),
+  onePasswordBin: z.string().default("op"),
+  onePasswordSecretRefOpenai: z.string().startsWith("op://").optional(),
+  onePasswordSecretRefPaseo: z.string().startsWith("op://").optional(),
+  secretProvider: z.enum(["bitwarden", "onepassword", "environment"]).default("bitwarden"),
   /** Force MOCK realtime even if an OpenAI key resolves. */
   forceMock: z.boolean().default(false),
   logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
@@ -49,7 +51,10 @@ const ENV_MAP: Record<string, keyof Config> = {
   PASEO_VOICE_BWS_ENV_FILE: "bwsEnvFile",
   PASEO_VOICE_BWS_SECRET_ID_OPENAI: "bwsSecretIdOpenai",
   PASEO_VOICE_BWS_SECRET_ID_PASEO: "bwsSecretIdPaseo",
-  PASEO_VOICE_DEV: "devMode",
+  PASEO_VOICE_SECRET_PROVIDER: "secretProvider",
+  PASEO_VOICE_ONEPASSWORD_BIN: "onePasswordBin",
+  PASEO_VOICE_ONEPASSWORD_SECRET_REF_OPENAI: "onePasswordSecretRefOpenai",
+  PASEO_VOICE_ONEPASSWORD_SECRET_REF_PASEO: "onePasswordSecretRefPaseo",
   PASEO_VOICE_MOCK: "forceMock",
   PASEO_VOICE_LOG_LEVEL: "logLevel",
 };
@@ -60,7 +65,7 @@ const NUMBER_KEYS: ReadonlySet<keyof Config> = new Set([
   "logTailEntries",
   "proposalTtlMs",
 ]);
-const BOOLEAN_KEYS: ReadonlySet<keyof Config> = new Set(["devMode", "forceMock"]);
+const BOOLEAN_KEYS: ReadonlySet<keyof Config> = new Set(["forceMock"]);
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -93,6 +98,11 @@ export function defaultConfigPath(env: NodeJS.ProcessEnv): string {
 }
 
 export async function loadConfig(deps: LoadConfigDeps): Promise<Config> {
+  if (deps.env["PASEO_VOICE_DEV"] !== undefined) {
+    throw new ConfigError(
+      "PASEO_VOICE_DEV was removed; set PASEO_VOICE_SECRET_PROVIDER=environment instead",
+    );
+  }
   const filePath = defaultConfigPath(deps.env);
   let fromFile: Record<string, unknown> = {};
   try {
@@ -111,6 +121,9 @@ export async function loadConfig(deps: LoadConfigDeps): Promise<Config> {
   }
 
   const fromEnv: Record<string, unknown> = {};
+  if (Object.hasOwn(fromFile, "devMode")) {
+    throw new ConfigError('devMode was removed; set secretProvider to "environment" instead');
+  }
   for (const [envName, key] of Object.entries(ENV_MAP)) {
     const raw = deps.env[envName];
     if (raw !== undefined && raw !== "") {
@@ -140,9 +153,11 @@ export function describeConfig(config: Config): Record<string, unknown> {
     summariseThresholdChars: config.summariseThresholdChars,
     logTailEntries: config.logTailEntries,
     proposalTtlMs: config.proposalTtlMs,
-    devMode: config.devMode,
+    secretProvider: config.secretProvider,
     forceMock: config.forceMock,
     bwsSecretIdOpenai: config.bwsSecretIdOpenai ? "set" : "unset",
     bwsSecretIdPaseo: config.bwsSecretIdPaseo ? "set" : "unset",
+    onePasswordSecretRefOpenai: config.onePasswordSecretRefOpenai ? "set" : "unset",
+    onePasswordSecretRefPaseo: config.onePasswordSecretRefPaseo ? "set" : "unset",
   };
 }

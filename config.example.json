@@ -8,7 +8,7 @@
   "summariseThresholdChars": 700,
   "logTailEntries": 40,
   "proposalTtlMs": 120000,
-  "devMode": true,
+  "secretProvider": "environment",
   "forceMock": false,
   "logLevel": "info"
 }

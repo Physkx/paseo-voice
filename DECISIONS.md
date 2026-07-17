@@ -10,9 +10,17 @@ the supported CLI surface instead of relying on an undocumented daemon API.
 
 ## Secret handling
 
-Normal mode resolves secrets from Bitwarden Secrets Manager once at startup. Development mode can
-read `OPENAI_API_KEY` and `PASEO_PASSWORD` from the process environment. Secret values stay in
-memory, never enter command arguments, and must not be logged.
+One explicit provider resolves secrets once at startup. Supported providers are Bitwarden Secrets
+Manager, 1Password CLI, and the process environment. Bitwarden remains the default for backward
+compatibility. The environment provider reads `OPENAI_API_KEY` and `PASEO_PASSWORD`. The
+1Password provider invokes `op read` sequentially for configured `op://` references and delegates
+authentication to the CLI's desktop integration or service-account environment. Secret values
+stay in memory, never enter command arguments, and must not be logged. Configured references may
+enter command arguments but must not be logged.
+
+Resolution remains best effort per secret. A missing or failed OpenAI secret selects mock mode,
+while a missing or failed Paseo password disables Paseo tools. Rotation takes effect after a
+process restart.
 
 ## Audio interaction
 

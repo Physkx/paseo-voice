@@ -31,14 +31,24 @@ realtime session, dispatcher state, and proposal store.
 2. `$PASEO_VOICE_CONFIG` or `~/.config/paseo-voice/config.json`
 3. portable defaults
 
-`src/secrets.ts` supports two flows:
+`src/secrets.ts` supports three providers:
 
-- Normal mode parses `BWS_ACCESS_TOKEN` from the configured bws environment file and invokes
-  `bws secret get` for configured secret IDs.
-- Development mode reads `OPENAI_API_KEY` and `PASEO_PASSWORD` from the process environment.
+- The `bitwarden` provider parses `BWS_ACCESS_TOKEN` from the configured bws environment file and
+  invokes `bws secret get` for configured secret IDs.
+- The `onepassword` provider invokes `op read --format json` sequentially for configured `op://`
+  references. The child inherits the process environment so the CLI can use desktop-app
+  integration or `OP_SERVICE_ACCOUNT_TOKEN`. Each read has a 20-second timeout.
+- The `environment` provider reads `OPENAI_API_KEY` and `PASEO_PASSWORD` from the process
+  environment. Empty values count as missing.
+
+The provider is selected once per process by `secretProvider` or
+`PASEO_VOICE_SECRET_PROVIDER`. Bitwarden is the default. `devMode` and `PASEO_VOICE_DEV` were
+removed and produce migration errors directing users to the environment provider.
 
 Missing OpenAI credentials select mock mode. Missing Paseo credentials replace the live client
-with an unavailable stub that returns a clear tool error.
+with an unavailable stub that returns a clear tool error. Resolution is independent and best
+effort for each secret. 1Password failures log only the provider, secret role, sanitized error
+category, and numeric exit code when available.
 
 ## Paseo adapter
 

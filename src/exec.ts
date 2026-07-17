@@ -18,6 +18,7 @@ export class ExecError extends Error {
     readonly exitCode: number | null,
     readonly stdout: string,
     readonly stderr: string,
+    readonly timedOut = false,
   ) {
     super(message);
     this.name = "ExecError";
@@ -44,7 +45,16 @@ export const realExec: ExecFn = (file, args, opts = {}) =>
       (error, stdout, stderr) => {
         if (error) {
           const code = typeof error.code === "number" ? error.code : null;
-          reject(new ExecError(`${file} failed: ${error.message}`, file, code, stdout, stderr));
+          reject(
+            new ExecError(
+              `${file} failed: ${error.message}`,
+              file,
+              code,
+              stdout,
+              stderr,
+              error.killed === true,
+            ),
+          );
           return;
         }
         resolve({ stdout, stderr });

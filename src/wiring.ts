@@ -26,7 +26,7 @@ export function buildPaseoClient(config: Config, secrets: Secrets, log: Logger):
   log.warn("paseo password unresolved; paseo tools will report themselves unavailable");
   const unavailable = async (): Promise<never> => {
     throw new PaseoCliError(
-      "Paseo access is not configured yet. Set PASEO_PASSWORD or configure its bws secret.",
+      "Paseo access is not configured yet. Configure PASEO_PASSWORD with the selected secret provider.",
       "NO_PASSWORD",
     );
   };

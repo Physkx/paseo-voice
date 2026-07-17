@@ -24,7 +24,8 @@ pnpm rust:test
 pnpm rust:build
 ```
 
-The test suite does not require live Paseo, OpenAI, Bitwarden, microphone, or summariser services.
+The test suite does not require live Paseo, OpenAI, Bitwarden, 1Password, microphone, or
+summariser services.
 
 ## Making changes
 

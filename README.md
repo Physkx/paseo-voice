@@ -14,7 +14,10 @@ The project is early alpha. Interfaces and configuration may change between comm
 - A working `paseo` CLI for live session operations
 - An OpenAI API key for realtime voice mode
 - An OpenAI-compatible chat-completions endpoint for optional reply summaries
-- Bitwarden Secrets Manager CLI (`bws`) for the default secret-loading flow
+- One supported secret source:
+  - Bitwarden Secrets Manager CLI (`bws`), which remains the default
+  - 1Password CLI (`op`)
+  - Process environment variables
 
 The broker starts in text-only mock mode when no OpenAI key is available. This is enough to
 develop and test the tool loop.
@@ -43,13 +46,91 @@ Configuration precedence is environment variables, then the JSON configuration f
 built-in defaults. The default file is `~/.config/paseo-voice/config.json`; override it with
 `PASEO_VOICE_CONFIG`.
 
-Start from [config.example.json](config.example.json). For environment-based local development,
-copy `.env.example` values into your shell or preferred secret manager. The application does not
-automatically load `.env` files.
+Start from [config.example.json](config.example.json). Select one secret provider for the whole
+process with `secretProvider` or `PASEO_VOICE_SECRET_PROVIDER`. Accepted values are `bitwarden`,
+`onepassword`, and `environment`. Bitwarden is the default when the setting is omitted.
 
-In normal mode, the broker reads a Bitwarden Secrets Manager access token from
-`~/.config/bws.env` and fetches configured secret IDs at startup. Secret values remain in process
-memory and are never placed in command arguments.
+The `environment` provider reads `OPENAI_API_KEY` and `PASEO_PASSWORD`. Start from
+[.env.example](.env.example) and load those values through your shell or preferred secret manager.
+The application does not automatically load `.env` files. Empty values count as missing.
+
+The `bitwarden` provider reads a Bitwarden Secrets Manager access token from
+`~/.config/bws.env` and fetches `bwsSecretIdOpenai` and `bwsSecretIdPaseo` at startup. Existing
+`PASEO_VOICE_BWS_*` environment overrides remain supported.
+
+```json
+{
+  "secretProvider": "bitwarden",
+  "bwsSecretIdOpenai": "<openai-secret-id>",
+  "bwsSecretIdPaseo": "<paseo-secret-id>"
+}
+```
+
+Equivalent environment overrides are:
+
+```bash
+export PASEO_VOICE_SECRET_PROVIDER=bitwarden
+export PASEO_VOICE_BWS_SECRET_ID_OPENAI='<openai-secret-id>'
+export PASEO_VOICE_BWS_SECRET_ID_PASEO='<paseo-secret-id>'
+```
+
+The `onepassword` provider calls the 1Password CLI directly. Configure secret references in the
+JSON file:
+
+```json
+{
+  "secretProvider": "onepassword",
+  "onePasswordSecretRefOpenai": "op://example-vault/openai/api-key",
+  "onePasswordSecretRefPaseo": "op://example-vault/paseo/password"
+}
+```
+
+Equivalent environment overrides are:
+
+```bash
+export PASEO_VOICE_SECRET_PROVIDER=onepassword
+export PASEO_VOICE_ONEPASSWORD_SECRET_REF_OPENAI='op://example-vault/openai/api-key'
+export PASEO_VOICE_ONEPASSWORD_SECRET_REF_PASEO='op://example-vault/paseo/password'
+```
+
+Authenticate `op` before starting Paseo Voice. Interactive use can rely on 1Password desktop-app
+integration. Unattended use can provide `OP_SERVICE_ACCOUNT_TOKEN` to the Paseo Voice process.
+`OP_ACCOUNT` selects an account when desktop integration has multiple accounts. The CLI child
+inherits the full process environment and resolves each configured reference sequentially with a
+20-second timeout. Override the executable with `onePasswordBin` or
+`PASEO_VOICE_ONEPASSWORD_BIN` when `op` is not on `PATH`.
+
+All providers resolve secrets once at startup. Failures remain independent and best effort: a
+missing OpenAI key selects mock mode, while a missing Paseo password disables Paseo tools. Restart
+the process after rotating a secret. Secret values remain in process memory, never enter command
+arguments, and are never logged. 1Password references enter the short-lived `op` process argument
+list but are redacted from application logs.
+
+`devMode` and `PASEO_VOICE_DEV` have been removed. Use the `environment` provider instead.
+
+See the current official [1Password CLI secret-reference documentation](https://www.1password.dev/cli/secret-references)
+and [1Password CLI authentication documentation](https://www.1password.dev/cli/get-started) for
+CLI setup and authentication details.
+
+### Manual 1Password smoke test
+
+Use a local configuration containing valid test references, authenticate the CLI through desktop
+integration or a service account, then build and start the broker with external OpenAI calls
+disabled:
+
+```bash
+pnpm build
+PASEO_VOICE_MOCK=1 pnpm start
+```
+
+Confirm that startup reports `"secretProvider":"onepassword"`, does not report a
+`onepassword secret fetch failed` warning, and does not report that the Paseo password is
+unresolved. Stop the broker with Ctrl+C.
+
+To verify best-effort degradation, temporarily replace one local test reference with an unused
+`op://` reference and start the broker again. It should still start, report only the affected
+secret role and a sanitized error category, and never print the reference or secret output. Do
+not commit the local references or any secret values.
 
 See [DECISIONS.md](DECISIONS.md) for current architectural decisions and
 [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for implementation details. Current hosting and
