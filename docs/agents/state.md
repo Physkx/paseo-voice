@@ -14,6 +14,7 @@ validation facts change.
 | Voice          | OpenAI Realtime when configured, text-only mock mode otherwise             |
 | Summaries      | Optional OpenAI-compatible local endpoint with cleaned-text fallback       |
 | Writes         | Two-phase proposal and explicit confirmation gate                          |
+| Rust           | Inert Phase 1 workspace; no runtime, secret, network, or Paseo capability  |
 | Active roadmap | Rust control plane, provenance-bound replies, summary queue, and dashboard |
 
 ## Hosting
@@ -60,6 +61,7 @@ exposure and use an explicit `PUBLIC_` prefix.
 | Agent document lint   | `pnpm lint:agents` | Agent rules, state, or playbooks change |
 | Focused unit tests    | `pnpm test`        | Runtime behavior or tests change        |
 | Production compile    | `pnpm build`       | TypeScript runtime changes              |
+| Rust workspace        | `pnpm rust:test`   | Rust control-plane changes              |
 | Future web build      | To be defined      | Every future web workspace change       |
 
 No remote deployment verification is currently available because Cloudflare Workers Builds is not

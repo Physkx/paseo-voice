@@ -2,9 +2,8 @@
 
 ## Status
 
-Architectural direction approved. Planning is complete enough to start scaffolding, but no Rust
-code, toolchain configuration, credential movement, write-path change, or deployment change has
-been made yet.
+Architectural direction approved. Phase 1 scaffolding is implemented and inert. No credential
+movement, write-path change, runtime integration, persistence, or deployment change has been made.
 
 ## Problem statement
 
@@ -176,6 +175,8 @@ Rollback: documentation and specification-only commits can be reverted independe
 changing runtime behavior.
 
 ### Phase 1: Add inert Rust scaffolding
+
+Status: implemented. The exit gate must remain green in every later phase.
 
 Goal: establish a reproducible Rust workspace without changing application behavior.
 

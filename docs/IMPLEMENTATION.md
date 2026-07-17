@@ -14,6 +14,11 @@ Local Paseo Voice broker
 Coding-agent sessions
 ```
 
+The Rust workspace is inert scaffolding during Phase 1. `paseo-safety-core` contains no domain
+behavior or I/O. `paseo-control-plane` supports only `--version` and is not started by the Node.js
+broker. It has no access to configuration, secrets, sockets, files, or Paseo. The current runtime
+architecture remains entirely Node.js until later phases pass their documented exit gates.
+
 The browser is a secret-free audio terminal. The broker owns configuration, secret resolution,
 session selection, tool dispatch, and confirmation state. Each browser connection gets its own
 realtime session, dispatcher state, and proposal store.
@@ -75,6 +80,6 @@ The required local and CI check is:
 pnpm check
 ```
 
-This verifies formatting, lint, strict TypeScript compilation, unit tests, and the production
-build. Tests use injected process, network, time, and socket dependencies so they do not require
-live services.
+This verifies Prettier, rustfmt, agent-document lint, Oxlint, Clippy, strict TypeScript compilation,
+Vitest, Cargo tests, and TypeScript and Rust production builds. Tests use injected process, network,
+time, and socket dependencies so they do not require live services.

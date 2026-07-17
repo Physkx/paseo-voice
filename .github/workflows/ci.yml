@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
       - uses: pnpm/action-setup@v4
         with:
           run_install: false

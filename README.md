@@ -10,6 +10,7 @@ The project is early alpha. Interfaces and configuration may change between comm
 
 - Node.js 26 or newer
 - pnpm 11.13.1
+- Rust 1.97.0 through `rustup` for control-plane development and repository checks
 - A working `paseo` CLI for live session operations
 - An OpenAI API key for realtime voice mode
 - An OpenAI-compatible chat-completions endpoint for optional reply summaries
@@ -63,6 +64,9 @@ deployment facts are maintained in [docs/agents/state.md](docs/agents/state.md).
 | `pnpm console`    | Open the text console after building              |
 | `pnpm format`     | Format tracked source and documentation           |
 | `pnpm lint`       | Run Oxlint                                        |
+| `pnpm rust:build` | Build the Rust workspace in release mode          |
+| `pnpm rust:lint`  | Run Clippy across the Rust workspace              |
+| `pnpm rust:test`  | Run all Rust tests                                |
 | `pnpm start`      | Start the compiled broker                         |
 | `pnpm test`       | Run the Vitest suite once                         |
 | `pnpm test:watch` | Run Vitest in watch mode                          |

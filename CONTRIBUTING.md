@@ -4,7 +4,9 @@ Paseo Voice is early alpha. Small, focused pull requests with tests are the easi
 
 ## Development setup
 
-Use Node.js 26 and the pnpm version declared in `package.json`.
+Use Node.js 26, the pnpm version declared in `package.json`, and Rust through `rustup`. The
+repository pins the exact Rust release and required rustfmt and Clippy components in
+`rust-toolchain.toml`.
 
 ```bash
 corepack enable
@@ -12,11 +14,24 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
+Running a Cargo or pnpm Rust command from the repository installs the pinned toolchain when needed.
+Use the focused commands below while developing Rust code:
+
+```bash
+pnpm rust:format
+pnpm rust:lint
+pnpm rust:test
+pnpm rust:build
+```
+
 The test suite does not require live Paseo, OpenAI, Bitwarden, microphone, or summariser services.
 
 ## Making changes
 
 - Keep TypeScript strict and preserve dependency injection at process and network boundaries.
+- Keep Rust free of unsafe code and preserve the pure safety-core module boundary.
+- Declare shared third-party Rust dependencies in the root `[workspace.dependencies]` table and
+  inherit them from member crates.
 - Add or update tests for behavior changes.
 - Keep write operations behind the two-phase confirmation gate.
 - Never put credentials in source, fixtures, logs, command arguments, or documentation.
