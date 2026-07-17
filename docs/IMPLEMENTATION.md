@@ -14,10 +14,16 @@ Local Paseo Voice broker
 Coding-agent sessions
 ```
 
-The Rust workspace is inert scaffolding during Phase 1. `paseo-safety-core` contains no domain
-behavior or I/O. `paseo-control-plane` supports only `--version` and is not started by the Node.js
-broker. It has no access to configuration, secrets, sockets, files, or Paseo. The current runtime
-architecture remains entirely Node.js until later phases pass their documented exit gates.
+The Rust workspace now contains the pure safety state machine and a strict version 1 local
+protocol. `paseo-control-plane --serve-stdio` serves bounded length-delimited JSON on inherited
+stdin and stdout until clean EOF. It opens no socket, owns no credential, performs no Paseo I/O,
+and is not started by the production Node.js broker. The current runtime remains Node.js until the
+later cutover gates pass.
+
+Every request has a validated request ID. Identical request bytes replay the exact original
+response. Reusing an ID for different bytes returns `request_id_conflict`. Unknown versions,
+operations, fields, enum variants, duplicate fields, truncated frames, oversized frames, and
+trailing bytes fail closed. The shared fixtures are in `docs/RUST_PROTOCOL_FIXTURES.json`.
 
 The browser is a secret-free audio terminal. The broker owns configuration, secret resolution,
 session selection, tool dispatch, and confirmation state. Each browser connection gets its own

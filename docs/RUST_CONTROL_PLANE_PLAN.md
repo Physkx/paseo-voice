@@ -2,8 +2,9 @@
 
 ## Status
 
-Architectural direction approved. Phase 1 scaffolding is implemented and inert. No credential
-movement, write-path change, runtime integration, persistence, or deployment change has been made.
+Architectural direction approved. Phases 0 through 3 are implemented. Rust owns the tested pure
+safety state and an opt-in unprivileged stdio protocol, but it is not started by production. No
+credential movement, write-path change, persistence, or deployment change has been made.
 
 ## Problem statement
 

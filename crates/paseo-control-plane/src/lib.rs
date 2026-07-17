@@ -1,9 +1,8 @@
-//! Inert control-plane scaffold.
-//!
-//! Phase 1 exposes version metadata only. It does not open sockets, read files,
-//! resolve secrets, or invoke Paseo.
+//! Paseo Voice control-plane adapters and protocol.
 
 #![forbid(unsafe_code)]
+
+pub mod protocol;
 
 /// Return the stable version line printed by the scaffold executable.
 #[must_use]

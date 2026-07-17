@@ -170,15 +170,16 @@ thread that produced the summary.
 
 The approved backend direction is a privileged Rust control-plane process. It will own reply
 provenance, proposal and confirmation state, delivery identifiers, the Paseo credential, and the
-only Paseo write path. The TypeScript broker remains the browser, audio, and OpenAI Realtime
-adapter during the phased migration. See
+only Paseo write path. TypeScript remains an adapter only during migration. The final target is one
+Rust backend for browser WebSocket, audio forwarding, OpenAI Realtime, summarisation, secrets, and
+Paseo access. Browser assets remain JavaScript and Node.js remains repository tooling. See
 [docs/RUST_CONTROL_PLANE_PLAN.md](docs/RUST_CONTROL_PLANE_PLAN.md) for the implementation plan.
 
 ### 1. Rust control-plane foundation
 
 - Add a Cargo workspace with a pure safety-core crate and a separate control-plane executable.
-- Keep the Rust process out of the Node.js process so credentials, write authority, crashes, and
-  recovery state are isolated from the voice adapter.
+- Use a supervised Rust child during migration, then remove the process boundary with the
+  TypeScript backend at final cutover.
 - Define a narrow local interface where response proposals identify an immutable summary context,
   never a caller-selected destination thread.
 - Model summary, proposal, confirmation, dispatch, and delivery states explicitly and reject
@@ -187,6 +188,7 @@ adapter during the phased migration. See
 - Cut over only after property, concurrency, crash-recovery, and cross-thread routing tests pass.
 - Keep the existing TypeScript write path available only as a rollback during migration, never as
   an independently selectable production path after cutover.
+- Remove the production TypeScript backend after Rust reaches browser and Realtime parity.
 
 ### 2. Reliable real-time foundation
 

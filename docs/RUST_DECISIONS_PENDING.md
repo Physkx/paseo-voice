@@ -24,6 +24,11 @@ new entry.
 | D011 | Runtime persistence  | Use SQLite metadata journal with restrictive local permissions        | Adds one embedded database dependency                               | Append-only JSON records or no crash recovery              |
 | D012 | Rust async and HTTP  | Tokio, Axum, rustls, and structured Serde messages                    | Conventional maintained stack, larger dependency graph              | Lower-level hyper/tungstenite implementation               |
 
+Phase 3 implemented D009 as a single supervised child using a four-byte big-endian length followed
+by at most 131,072 bytes of strict versioned JSON. The child opens no listener, inherits private
+pipes from its parent, processes requests sequentially, and shuts down on EOF. There is no
+automatic request or write retry.
+
 ## Decisions not deferred
 
 These requirements are fixed by existing project policy and are not offered as final-review

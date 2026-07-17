@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "valid": [
+    {
+      "name": "health",
+      "request": {
+        "version": 1,
+        "request_id": "request-health",
+        "op": "health"
+      },
+      "expected_status": "healthy"
+    },
+    {
+      "name": "observe-reply",
+      "request": {
+        "version": 1,
+        "request_id": "request-observe",
+        "op": "observe_reply",
+        "summary_id": "summary-a",
+        "source_thread_id": "thread-a",
+        "source_reply_id": "reply-a",
+        "observed_at_ms": 10
+      },
+      "expected_status": "reply_observed"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-version",
+      "request": {
+        "version": 2,
+        "request_id": "request-version",
+        "op": "health"
+      }
+    },
+    {
+      "name": "unknown-operation",
+      "request": {
+        "version": 1,
+        "request_id": "request-operation",
+        "op": "write_anywhere"
+      }
+    },
+    {
+      "name": "unknown-field",
+      "request": {
+        "version": 1,
+        "request_id": "request-field",
+        "op": "health",
+        "destination_thread_id": "thread-b"
+      }
+    }
+  ]
+}
