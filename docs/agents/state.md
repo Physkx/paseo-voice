@@ -6,15 +6,15 @@ validation facts change.
 
 ## Current phase
 
-| Item           | Current                                                                |
-| -------------- | ---------------------------------------------------------------------- |
-| Phase          | Early alpha, reliable voice and agent-control foundation               |
-| Broker         | Node.js service running beside the Paseo CLI                           |
-| Browser        | Secret-free static push-to-talk client served by the broker            |
-| Voice          | OpenAI Realtime when configured, text-only mock mode otherwise         |
-| Summaries      | Optional OpenAI-compatible local endpoint with cleaned-text fallback   |
-| Writes         | Two-phase proposal and explicit confirmation gate                      |
-| Active roadmap | Provenance-bound replies, summary queue, dashboard, and talking avatar |
+| Item           | Current                                                                    |
+| -------------- | -------------------------------------------------------------------------- |
+| Phase          | Early alpha, reliable voice and agent-control foundation                   |
+| Broker         | Node.js service running beside the Paseo CLI                               |
+| Browser        | Secret-free static push-to-talk client served by the broker                |
+| Voice          | OpenAI Realtime when configured, text-only mock mode otherwise             |
+| Summaries      | Optional OpenAI-compatible local endpoint with cleaned-text fallback       |
+| Writes         | Two-phase proposal and explicit confirmation gate                          |
+| Active roadmap | Rust control plane, provenance-bound replies, summary queue, and dashboard |
 
 ## Hosting
 

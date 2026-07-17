@@ -83,7 +83,27 @@ steering multiple coding-agent threads. It should announce short summaries as ag
 accept a spoken or typed response, and guarantee that the response can only be submitted to the
 thread that produced the summary.
 
-### 1. Reliable real-time foundation
+The approved backend direction is a privileged Rust control-plane process. It will own reply
+provenance, proposal and confirmation state, delivery identifiers, the Paseo credential, and the
+only Paseo write path. The TypeScript broker remains the browser, audio, and OpenAI Realtime
+adapter during the phased migration. See
+[docs/RUST_CONTROL_PLANE_PLAN.md](docs/RUST_CONTROL_PLANE_PLAN.md) for the implementation plan.
+
+### 1. Rust control-plane foundation
+
+- Add a Cargo workspace with a pure safety-core crate and a separate control-plane executable.
+- Keep the Rust process out of the Node.js process so credentials, write authority, crashes, and
+  recovery state are isolated from the voice adapter.
+- Define a narrow local interface where response proposals identify an immutable summary context,
+  never a caller-selected destination thread.
+- Model summary, proposal, confirmation, dispatch, and delivery states explicitly and reject
+  invalid transitions.
+- Run the Rust decision engine in shadow mode before moving credentials or write authority.
+- Cut over only after property, concurrency, crash-recovery, and cross-thread routing tests pass.
+- Keep the existing TypeScript write path available only as a rollback during migration, never as
+  an independently selectable production path after cutover.
+
+### 2. Reliable real-time foundation
 
 - Harden the existing browser, broker, Paseo CLI, realtime voice, and local summariser loop.
 - Detect newly completed agent replies without rereading or announcing the same reply twice.
@@ -92,7 +112,7 @@ thread that produced the summary.
 - Add integration coverage for disconnects, reconnects, retries, duplicate events, and degraded
   summarisation.
 
-### 2. Provenance-bound summaries and responses
+### 3. Provenance-bound summaries and responses
 
 - Give every summary an immutable context containing its summary ID, source thread ID, source
   reply ID, and creation time.
@@ -106,7 +126,7 @@ thread that produced the summary.
 - Test the invariant end to end: a response originating from summary A can never be pasted,
   proposed, confirmed, or delivered to the thread for summary B.
 
-### 3. Concurrent summary queue
+### 4. Concurrent summary queue
 
 - Funnel agent completion events through one ordered summary queue so simultaneous replies do not
   overlap, overwrite context, or race for the response field.
@@ -119,7 +139,7 @@ thread that produced the summary.
 - Defer voice commands for skipping, replaying, deferring, or reprioritising summaries unless
   real-world use shows that short summaries alone are insufficient.
 
-### 4. Agent dashboard and talking avatar
+### 5. Agent dashboard and talking avatar
 
 - Replace the audio-terminal layout with agent cards showing thread name, provider, live state,
   latest short summary, and queued-response count.
@@ -131,7 +151,7 @@ thread that produced the summary.
 - Preserve a lightweight, secret-free browser client and responsive keyboard, pointer, and touch
   controls.
 
-### 5. Natural interruption and recovery
+### 6. Natural interruption and recovery
 
 - Support barge-in by stopping speech and playback as soon as the user starts talking.
 - Preserve the interrupted summary and its source context so it can be resumed or replayed without
@@ -140,7 +160,7 @@ thread that produced the summary.
   a pending write.
 - Recover cleanly from microphone, audio, network, realtime API, summariser, and Paseo failures.
 
-### 6. Audited response timeline
+### 7. Audited response timeline
 
 - Maintain a searchable timeline of summaries and responses with source thread, destination
   thread, confirmation state, timestamps, and delivery result.

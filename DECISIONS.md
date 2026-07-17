@@ -43,6 +43,29 @@ the same dispatcher and confirmation gate as realtime mode.
 The repository is open source under MIT, but the package remains marked `private` to prevent
 accidental npm publication while the project is early alpha.
 
+## Privileged Rust control plane
+
+The backend will migrate in phases to a privileged Rust control-plane process. Rust will own reply
+provenance, the ordered summary queue, proposal and confirmation state, delivery identifiers,
+recovery metadata, the Paseo credential, and the only Paseo write path.
+
+The TypeScript broker remains the browser, audio, and OpenAI Realtime adapter during the migration.
+The Rust control plane runs out of process and exposes a narrow local interface. It is not a native
+Node.js addon. Proposal and confirmation calls do not accept a destination thread; the control
+plane derives the destination from an immutable summary context that it already owns.
+
+Migration is incremental. The Rust decision engine must first run in shadow mode against the
+existing TypeScript behavior. Credential and write authority move only after the safety contract,
+cross-thread routing tests, concurrency tests, and crash-recovery tests pass. After cutover, the
+TypeScript process must have no Paseo write credential and no alternate write path.
+
+Exactly-once delivery requires a receiver-recognised idempotency identifier and an authoritative
+delivery receipt. Rust alone does not provide that guarantee. Until the supported Paseo CLI can
+accept a stable caller-supplied message identifier, ambiguous delivery outcomes must be reported as
+unknown and must not be retried automatically.
+
+See `docs/RUST_CONTROL_PLANE_PLAN.md` for sequencing, acceptance gates, and rollback rules.
+
 ## Deferred work
 
 - Selecting among multiple remote Paseo daemons
