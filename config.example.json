@@ -1,0 +1,14 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 8790,
+  "openaiModel": "gpt-realtime-2.1",
+  "openaiVoice": "marin",
+  "sparkBaseUrl": "http://127.0.0.1:1234/v1",
+  "sparkModel": "qwen3.5-9b-instruct-nvfp4",
+  "summariseThresholdChars": 700,
+  "logTailEntries": 40,
+  "proposalTtlMs": 120000,
+  "devMode": true,
+  "forceMock": false,
+  "logLevel": "info"
+}

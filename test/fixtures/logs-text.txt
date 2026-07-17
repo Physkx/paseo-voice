@@ -1,0 +1,9 @@
+Studio check passes and the schema manifest is fresh. Now pushing main.
+All four branches handled. Let me confirm the final state.
+All done. Here's the summary.
+
+## Result: all branches merged to main and deleted
+
+origin now has only origin/main. Main HEAD is abc1234.
+
+All merged cleanly with no conflicts. Each push triggered a deploy.

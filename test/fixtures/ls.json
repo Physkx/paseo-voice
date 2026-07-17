@@ -1,0 +1,22 @@
+[
+  {
+    "id": "11111111-2222-3333-4444-555555555555",
+    "shortId": "1111111",
+    "name": "Fix the failing auth tests",
+    "provider": "claude/claude-fable-5",
+    "thinking": "max",
+    "status": "running",
+    "cwd": "~/dev/example-repo",
+    "created": "29 minutes ago"
+  },
+  {
+    "id": "66666666-7777-8888-9999-aaaaaaaaaaaa",
+    "shortId": "6666666",
+    "name": "Refactor the API layer",
+    "provider": "codex/gpt-5.4",
+    "thinking": null,
+    "status": "idle",
+    "cwd": "~/dev/other-repo",
+    "created": "2 hours ago"
+  }
+]

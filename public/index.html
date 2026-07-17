@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paseo Voice</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Paseo Voice</h1>
+        <div class="pills">
+          <span id="conn-pill" class="pill">connecting</span>
+          <span id="mode-pill" class="pill">mode: ?</span>
+          <span id="state-pill" class="pill">idle</span>
+        </div>
+      </header>
+
+      <section id="setup">
+        <button id="enable-mic" class="primary">Enable microphone</button>
+        <p class="hint">
+          Required once per page load. Hold the talk button or the space bar to speak.
+        </p>
+      </section>
+
+      <section id="proposal-banner" class="hidden">
+        <strong>Pending confirmation:</strong>
+        <span id="proposal-text"></span>
+      </section>
+
+      <button id="ptt" class="ptt" disabled>
+        <span id="ptt-label">Hold to talk</span>
+      </button>
+
+      <section id="text-turn-box" class="hidden">
+        <form id="text-form">
+          <input
+            id="text-input"
+            type="text"
+            placeholder="Type a turn (mock mode)"
+            autocomplete="off"
+          />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Conversation</h2>
+        <div id="transcript" class="scroll"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Activity</h2>
+        <div id="activity" class="scroll small"></div>
+      </section>
+    </main>
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
