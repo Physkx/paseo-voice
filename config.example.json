@@ -1,9 +1,9 @@
 {
   "listenHost": "127.0.0.1",
   "listenPort": 8790,
-  "openaiModel": "gpt-realtime-2.1",
-  "openaiVoice": "marin",
-  "openaiBaseUrl": "wss://api.openai.com/v1/realtime",
+  "openaiModel": "grok-voice-latest",
+  "openaiVoice": "eve",
+  "openaiBaseUrl": "wss://api.x.ai/v1/realtime",
   "sparkBaseUrl": "https://api.x.ai/v1",
   "sparkModel": "grok-4-1-fast-non-reasoning",
   "allowInsecureTailscaleSpark": false,
@@ -29,10 +29,7 @@
       "defaultProvider": "codex/gpt-5.4"
     }
   ],
-  "secretProvider": "onepassword",
-  "onePasswordSecretRefOpenai": "op://Private/OpenAI/credential",
-  "onePasswordSecretRefPaseo": "op://Private/Paseo/password",
-  "onePasswordSecretRefSpark": "op://Private/xAI/credential",
+  "secretProvider": "environment",
   "forceMock": false,
   "logLevel": "info"
 }

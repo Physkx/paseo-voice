@@ -34,7 +34,7 @@ pub fn capability_frame(config: &Config, live: bool) -> Value {
         "speech_to_text":{
             "id":"realtime-english",
             "label":"Realtime English transcription",
-            "model_id":"gpt-4o-mini-transcribe",
+            "model_id":config.openai_model,
             "processing_location":speech_location,
             "status":if live { "configured" } else { "unavailable_in_mock_mode" }
         },
@@ -526,14 +526,15 @@ mod tests {
                 "xAI cloud",
             ),
             (
-                "wss://api.openai.com/v1/realtime",
+                "wss://api.x.ai/v1/realtime",
                 "https://api.x.ai/v1/",
-                "OpenAI cloud",
+                "xAI cloud",
                 "xAI cloud",
             ),
         ] {
             let config = Config {
                 openai_base_url: realtime.to_owned(),
+                openai_model: "voice-model".to_owned(),
                 spark_base_url: cleanup.to_owned(),
                 spark_model: "approved-model".to_owned(),
                 ..Config::default()
@@ -544,6 +545,7 @@ mod tests {
                 expected_realtime
             );
             assert_eq!(frame["cleanup"]["processing_location"], expected_cleanup);
+            assert_eq!(frame["speech_to_text"]["model_id"], "voice-model");
             assert_eq!(frame["cleanup"]["model_id"], "approved-model");
             let encoded = frame.to_string();
             assert!(!encoded.contains(realtime));

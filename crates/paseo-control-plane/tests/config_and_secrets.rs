@@ -629,6 +629,26 @@ fn official_xai_summariser_endpoint_is_accepted() {
 }
 
 #[test]
+fn official_xai_realtime_endpoint_is_accepted() {
+    for value in ["wss://api.x.ai/v1/realtime", "wss://api.x.ai/v1/realtime/"] {
+        let environment = HashMap::from([
+            ("PASEO_VOICE_OPENAI_BASE_URL".to_owned(), value.to_owned()),
+            (
+                "PASEO_VOICE_OPENAI_MODEL".to_owned(),
+                "grok-voice-latest".to_owned(),
+            ),
+            ("PASEO_VOICE_OPENAI_VOICE".to_owned(), "eve".to_owned()),
+        ]);
+        let loaded = config::load(&environment).unwrap_or_else(|error| {
+            panic!("xAI Realtime endpoint {value} should load: {error}");
+        });
+        assert_eq!(loaded.openai_base_url, value);
+        assert_eq!(loaded.openai_model, "grok-voice-latest");
+        assert_eq!(loaded.openai_voice, "eve");
+    }
+}
+
+#[test]
 fn bitwarden_passes_essential_os_variables_and_token_to_the_bws_child() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let token_file = directory.path().join("bws.env");

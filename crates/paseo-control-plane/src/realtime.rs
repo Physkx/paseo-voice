@@ -448,8 +448,13 @@ pub async fn run(
         send_error(&mut browser, "invalid Realtime URL").await;
         return;
     };
-    if endpoint.location == EndpointLocation::OpenAiCloud {
-        let Some(api_key) = api_key else {
+    // Official OpenAI and xAI clouds require a bearer. Custom endpoints stay credential-free
+    // so an OpenAI or xAI key is never forwarded to an operator-configured third host.
+    if matches!(
+        endpoint.location,
+        EndpointLocation::OpenAiCloud | EndpointLocation::XaiCloud
+    ) {
+        let Some(api_key) = api_key.as_deref() else {
             send_error(&mut browser, "Realtime credential unavailable").await;
             return;
         };

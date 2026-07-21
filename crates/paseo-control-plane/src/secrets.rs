@@ -137,10 +137,10 @@ fn environment_model_key(environment: &HashMap<String, String>) -> Option<String
 fn read_grok_subscription_token(environment: &HashMap<String, String>) -> Option<String> {
     let path = environment.get("GROK_AUTH_FILE").map_or_else(
         || {
-            environment
-                .get("HOME")
-                .map(|home| PathBuf::from(home).join(".grok/auth.json"))
-                .unwrap_or_else(|| PathBuf::from("~/.grok/auth.json"))
+            environment.get("HOME").map_or_else(
+                || PathBuf::from("~/.grok/auth.json"),
+                |home| PathBuf::from(home).join(".grok/auth.json"),
+            )
         },
         PathBuf::from,
     );

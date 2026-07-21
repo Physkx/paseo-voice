@@ -47,13 +47,17 @@ full live functionality; mock mode can start without them.
 - Node.js 26 or newer and pnpm 11.13.1 for repository tooling
 - Rust 1.97.0 through `rustup`
 - A working `paseo` CLI for session operations
-- An OpenAI API key for the official Realtime endpoint
+- A Realtime voice credential for the configured cloud endpoint (OpenAI key, xAI/Grok credential, or
+  a credential-free custom host)
 - An OpenAI-compatible chat-completions endpoint for optional reply summaries and dictation cleanup
 - Bitwarden Secrets Manager CLI, 1Password CLI, or process environment variables for secrets
 
-With the official Realtime endpoint, a missing OpenAI key selects text-only mock mode. A
-credential-free custom endpoint can run live. Set `forceMock` or `PASEO_VOICE_MOCK=true` to disable
-outbound Realtime connections in every case.
+Official OpenAI Realtime (`wss://api.openai.com/v1/realtime`) requires `OPENAI_API_KEY` (or the
+matching secret-manager OpenAI ref). Official xAI Grok Voice (`wss://api.x.ai/v1/realtime`) uses
+the model/xAI credential (`XAI_API_KEY`, Grok OAuth store, `PASEO_VOICE_SPARK_API_KEY`, or spark
+secret-manager refs). Missing cloud credentials select text-only mock mode. A credential-free
+custom endpoint can run live. Set `forceMock` or `PASEO_VOICE_MOCK=true` to disable outbound
+Realtime connections in every case.
 
 ## Quick start
 
@@ -130,25 +134,41 @@ Paseo credentials disable Paseo tools without preventing the server from startin
 credentials make summarisation and dictation cleanup degrade to safe local fallbacks. Restart after
 secret rotation.
 
+### Realtime voice providers
+
+Configure Realtime with `openaiBaseUrl` / `PASEO_VOICE_OPENAI_BASE_URL`, `openaiModel`, and
+`openaiVoice` (field names stay stable for compatibility; they apply to any Realtime host).
+
+| Provider       | Base URL                             | Example model       | Credential                                            |
+| -------------- | ------------------------------------ | ------------------- | ----------------------------------------------------- |
+| OpenAI         | `wss://api.openai.com/v1/realtime`   | `gpt-realtime-2.1`  | `OPENAI_API_KEY` / OpenAI secret refs                 |
+| xAI Grok Voice | `wss://api.x.ai/v1/realtime`         | `grok-voice-latest` | Grok OAuth store, `XAI_API_KEY`, or spark secret refs |
+| Custom         | private `wss://` or loopback `ws://` | operator-defined    | optional / credential-free                            |
+
+OpenAI and xAI remain fully supported side by side. Public defaults stay OpenAI-compatible;
+operators choose the host in config.
+
 ### Model endpoint (summarisation and dictation cleanup)
 
 Configure any OpenAI-compatible chat-completions base URL with `sparkBaseUrl` /
 `PASEO_VOICE_SPARK_BASE_URL` and `sparkModel` / `PASEO_VOICE_SPARK_MODEL`.
 
-For an **xAI** subscription or API key:
+**Grok-only operator example** (Realtime voice + cleanup on xAI, Grok CLI subscription login):
 
 ```json
 {
+  "openaiBaseUrl": "wss://api.x.ai/v1/realtime",
+  "openaiModel": "grok-voice-latest",
+  "openaiVoice": "eve",
   "sparkBaseUrl": "https://api.x.ai/v1",
   "sparkModel": "grok-4-1-fast-non-reasoning",
-  "secretProvider": "onepassword",
-  "onePasswordSecretRefSpark": "op://Private/xAI/credential"
+  "secretProvider": "environment"
 }
 ```
 
-Or with the environment provider, set `XAI_API_KEY` (or `PASEO_VOICE_SPARK_API_KEY`) and point
-`sparkBaseUrl` at `https://api.x.ai/v1`. The exact official xAI base URL is labeled `xAI cloud` in
-browser capability metadata. Local loopback models remain supported as before.
+With `secretProvider: "environment"` and an active `grok` login, `~/.grok/auth.json` supplies the
+xAI bearer for both Realtime and cleanup. OpenAI-only operators keep the official OpenAI Realtime
+URL and `OPENAI_API_KEY` without changing other fields.
 
 ### Endpoint policy
 

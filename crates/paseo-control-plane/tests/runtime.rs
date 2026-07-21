@@ -42,7 +42,7 @@ use tokio_tungstenite::{
 struct ChildGuard(Child);
 
 #[test]
-fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
+fn realtime_mode_requires_a_key_only_for_official_cloud_endpoints() {
     for (base_url, api_key, force_mock, expected) in [
         ("wss://api.openai.com/v1/realtime", None, false, "mock"),
         (
@@ -51,6 +51,9 @@ fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
             false,
             "real",
         ),
+        ("wss://api.x.ai/v1/realtime", None, false, "mock"),
+        ("wss://api.x.ai/v1/realtime", Some("key"), false, "real"),
+        ("wss://api.x.ai/v1/realtime/", Some("key"), false, "real"),
         ("ws://127.0.0.1:8080/realtime", None, false, "real"),
         ("wss://realtime.example/v1/realtime", None, false, "real"),
         ("ws://127.0.0.1:8080/realtime", Some("key"), true, "mock"),
@@ -62,6 +65,34 @@ fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
         };
         assert_eq!(realtime_mode(&config, api_key), expected, "{base_url}");
     }
+}
+
+#[test]
+fn realtime_credential_prefers_xai_model_key_on_official_xai_endpoint() {
+    use paseo_control_plane::{runtime::realtime_credential, secrets::Secrets};
+
+    let config = Config {
+        openai_base_url: "wss://api.x.ai/v1/realtime".to_owned(),
+        ..Config::default()
+    };
+    let secrets = Secrets {
+        openai_api_key: Some("openai-only".to_owned()),
+        spark_api_key: Some("xai-model".to_owned()),
+        paseo_password: None,
+    };
+    assert_eq!(
+        realtime_credential(&config, &secrets).as_deref(),
+        Some("xai-model")
+    );
+
+    let openai_config = Config {
+        openai_base_url: "wss://api.openai.com/v1/realtime".to_owned(),
+        ..Config::default()
+    };
+    assert_eq!(
+        realtime_credential(&openai_config, &secrets).as_deref(),
+        Some("openai-only")
+    );
 }
 
 impl Drop for ChildGuard {

@@ -314,11 +314,14 @@ fn validate_realtime_url(value: &str) -> Result<ValidatedEndpoint, String> {
         _ => return Err("invalid OpenAI Realtime base URL".to_owned()),
     }
     let official_openai = matches!(
-        value,
-        "wss://api.openai.com/v1/realtime" | "wss://api.openai.com/v1/realtime/"
+        value.trim_end_matches('/'),
+        "wss://api.openai.com/v1/realtime"
     );
+    let official_xai = matches!(value.trim_end_matches('/'), "wss://api.x.ai/v1/realtime");
     let location = if official_openai {
         EndpointLocation::OpenAiCloud
+    } else if official_xai {
+        EndpointLocation::XaiCloud
     } else if loopback {
         EndpointLocation::BrokerConfiguredLocal
     } else {

@@ -57,12 +57,43 @@ pub fn build_model_http_client(api_key: Option<&str>) -> Result<reqwest::Client,
         .map_err(|_| "HTTP model client construction failed".to_owned())
 }
 
+/// Resolve the Realtime WebSocket bearer for the configured endpoint.
+///
+/// Official `OpenAI` Realtime uses `OPENAI_API_KEY` / secret-manager `OpenAI` refs.
+/// Official xAI Grok Voice uses the model/xAI credential (`PASEO_VOICE_SPARK_API_KEY`,
+/// `XAI_API_KEY`, Grok OAuth store, or secret-manager spark refs), falling back to the
+/// `OpenAI`-named field when that is the only configured bearer. Custom endpoints keep the
+/// optional `OpenAI`-named field for operators who inject a key.
+#[must_use]
+pub fn realtime_credential(config: &Config, secrets: &Secrets) -> Option<String> {
+    let Ok(endpoint) = config.realtime_endpoint() else {
+        return None;
+    };
+    match endpoint.location {
+        EndpointLocation::OpenAiCloud => secrets.openai_api_key.clone(),
+        EndpointLocation::XaiCloud => secrets
+            .spark_api_key
+            .clone()
+            .or_else(|| secrets.openai_api_key.clone()),
+        EndpointLocation::BrokerConfiguredLocal | EndpointLocation::BrokerConfiguredRemote => {
+            secrets.openai_api_key.clone()
+        }
+    }
+}
+
 /// Select live Realtime only when the configured endpoint has the credentials it requires.
 #[must_use]
-pub fn realtime_mode(config: &Config, openai_api_key: Option<&str>) -> &'static str {
-    let available = config.realtime_endpoint().is_ok_and(|endpoint| {
-        endpoint.location != EndpointLocation::OpenAiCloud || openai_api_key.is_some()
-    });
+pub fn realtime_mode(config: &Config, realtime_api_key: Option<&str>) -> &'static str {
+    let available = config
+        .realtime_endpoint()
+        .is_ok_and(|endpoint| match endpoint.location {
+            EndpointLocation::OpenAiCloud | EndpointLocation::XaiCloud => {
+                realtime_api_key.is_some()
+            }
+            EndpointLocation::BrokerConfiguredLocal | EndpointLocation::BrokerConfiguredRemote => {
+                true
+            }
+        });
     if !config.force_mock && available {
         "real"
     } else {
@@ -121,7 +152,8 @@ pub async fn serve(
     dependencies: RuntimeDependencies,
     listener: tokio::net::TcpListener,
 ) -> Result<(), String> {
-    let mode = realtime_mode(&config, secrets.openai_api_key.as_deref());
+    let realtime_api_key = realtime_credential(&config, &secrets);
+    let mode = realtime_mode(&config, realtime_api_key.as_deref());
     if let Some(parent) = config.journal_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("journal directory failed: {error}"))?;
@@ -140,7 +172,7 @@ pub async fn serve(
     let state = Arc::new(AppState {
         mode,
         config: config.clone(),
-        openai_api_key: secrets.openai_api_key,
+        openai_api_key: realtime_api_key,
         paseo_password: secrets.paseo_password,
         journal: Arc::new(Mutex::new(journal)),
         clock: dependencies.clock,
