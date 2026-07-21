@@ -75,5 +75,5 @@ Every task completion should include:
 | Browser and deployment boundary | `docs/agents/publish-boundary.md` |
 | Implementation architecture     | `docs/IMPLEMENTATION.md`          |
 | Architecture decisions          | `DECISIONS.md`                    |
-| Product roadmap                 | `README.md`                       |
+| Product status and limits       | `README.md`                       |
 | Contribution guide              | `CONTRIBUTING.md`                 |

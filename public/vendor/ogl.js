@@ -9,8 +9,8 @@
  *   printf 'export { Renderer, Camera, Transform, Program, Geometry, Mesh, Vec3 } from "./package/src/index.js";\n' > entry.js
  *   pnpm dlx esbuild entry.js --bundle --format=esm --outfile=ogl.js
  *
- * Do not edit by hand. Update the pinned version here and in DECISIONS.md
- * when upgrading.
+ * Do not edit the bundle by hand. Update the pinned version and regenerate it
+ * with the commands above when upgrading.
  */
 // package/src/math/functions/Vec3Func.js
 function length(a) {

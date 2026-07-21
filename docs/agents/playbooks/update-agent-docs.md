@@ -25,7 +25,7 @@ Changing `AGENTS.md`, `CLAUDE.md`, `docs/agents/*`, playbooks, or agent-document
 
 1. Put each fact in one owning document.
 2. Add a router row only when a new task type needs different instructions.
-3. Link to architecture and roadmap documents instead of copying them.
+3. Link to architecture and current-state documents instead of copying them.
 4. Update `state.md` whenever hosting, deployment, or validation facts change.
 5. Keep internal agent documents out of any future public web build.
 

@@ -8,9 +8,7 @@
  * - A: silhouette, cubes exist only where alpha is above the threshold
  *
  * The current face is a procedural generic heightfield so the pipeline stays
- * reproducible with no external tools. Decision 4 in DECISIONS.md allows
- * replacing it with an orthographic depth render of a CC0 MakeHuman head that
- * follows the same channel layout. Keep the resolution small; every opaque
+ * reproducible with no external tools. Keep the resolution small; every opaque
  * texel becomes one rendered cube instance.
  *
  * Usage: node scripts/generate-avatar-depth.mjs [--debug]
