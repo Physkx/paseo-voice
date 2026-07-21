@@ -4,6 +4,11 @@ All notable project changes are recorded here.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-21
+
+- **Documentation**: Refresh the README and dashboard screenshot for selectable profiles
+- **Browser layout**: Keep long profile metadata within its selector column
+
 ## [0.4.0] - 2026-07-21
 
 - **Voice routing**: Add named OpenAI, xAI, and compatible voice profiles with idle-only switching

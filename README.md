@@ -5,10 +5,14 @@
 # Paseo Voice Agent
 
 Paseo Voice is a local push-to-talk and dictation interface for Paseo coding-agent sessions. A
-Rust broker connects a secret-free browser to Paseo and selectable Realtime providers while keeping every write
-behind an explicit proposal and confirmation gate.
+Rust broker connects a secret-free browser to Paseo, named Realtime voice profiles, and independent
+dictation cleanup profiles while keeping every write behind an explicit proposal and confirmation
+gate.
 
-![The Paseo Voice dashboard in mock mode](docs/assets/dashboard.png)
+![The Paseo Voice dashboard showing independent xAI voice and local dictation cleanup profiles in mock mode](docs/assets/dashboard.png)
+
+The dashboard receives only safe profile metadata from the broker. Endpoint URLs, credential IDs,
+secret references, and secret values never reach the browser.
 
 The project is early alpha. It is intended for local or private-host use and is not ready for
 direct public-network exposure.
@@ -35,7 +39,8 @@ The current application provides:
 
 When `autoReplyPollMs` is nonzero, each live browser connection polls its selected Paseo host and
 treats a visible non-idle to idle transition as a completed reply. It reads and binds that reply,
-then asks OpenAI Realtime to summarise and speak it with tools disabled. This is an alpha fallback:
+then asks the selected Realtime voice provider to summarise and speak it with tools disabled. This
+is an alpha fallback:
 fast transitions may be missed, concurrent browsers may announce the same reply, and identical reply
 text is deduplicated by its synthetic digest. Manual reads remain available. After a connection
 closes gracefully, the broker can give its committed content-free deduplication snapshot to a later
@@ -141,10 +146,10 @@ credential whose configured variable is exactly `XAI_API_KEY`. Explicit Bitwarde
 other named environment credentials remain operator overrides. Named credential values and OAuth
 tokens are never forwarded to secret-manager child processes.
 
-Secrets are resolved once at startup. Missing OpenAI credentials affect Realtime only; missing
-Paseo credentials disable Paseo tools without preventing the server from starting. Missing model
-credentials make summarisation and dictation cleanup degrade to safe local fallbacks. Restart after
-secret rotation.
+Secrets are resolved once at startup. Missing voice profile credentials affect Realtime only;
+missing Paseo credentials disable Paseo tools without preventing the server from starting. Missing
+model credentials make summarisation and dictation cleanup degrade to safe local fallbacks. Restart
+after secret rotation.
 
 ### Breaking configuration change
 
