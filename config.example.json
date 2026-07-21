@@ -6,6 +6,7 @@
   "openaiBaseUrl": "wss://api.openai.com/v1/realtime",
   "sparkBaseUrl": "http://127.0.0.1:1234/v1",
   "sparkModel": "qwen3.5-9b-instruct-nvfp4",
+  "allowInsecureTailscaleSpark": false,
   "summariseThresholdChars": 700,
   "logTailEntries": 40,
   "autoReplyPollMs": 1000,

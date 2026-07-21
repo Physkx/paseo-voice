@@ -80,6 +80,8 @@ pub struct Config {
     pub spark_base_url: String,
     /// Summariser model.
     pub spark_model: String,
+    /// Explicitly permit plaintext HTTP to a Tailscale IPv4 summariser.
+    pub allow_insecure_tailscale_spark: bool,
     /// Characters before model summarisation.
     pub summarise_threshold_chars: usize,
     /// Recent Paseo log entries inspected for a reply.
@@ -131,6 +133,7 @@ impl Default for Config {
             openai_base_url: "wss://api.openai.com/v1/realtime".to_owned(),
             spark_base_url: "http://127.0.0.1:1234/v1".to_owned(),
             spark_model: "qwen3.5-9b-instruct-nvfp4".to_owned(),
+            allow_insecure_tailscale_spark: false,
             summarise_threshold_chars: 700,
             log_tail_entries: 40,
             auto_reply_poll_ms: 0,
@@ -240,11 +243,11 @@ pub fn load(environment: &HashMap<String, String>) -> Result<Config, String> {
         config.auto_reply_poll_ms,
     )?;
     if let Some(value) = environment.get("PASEO_VOICE_MOCK") {
-        config.force_mock = match value.to_lowercase().as_str() {
-            "1" | "true" => true,
-            "0" | "false" => false,
-            _ => return Err("PASEO_VOICE_MOCK is invalid".to_owned()),
-        };
+        config.force_mock = boolean_override(value, "PASEO_VOICE_MOCK")?;
+    }
+    if let Some(value) = environment.get("PASEO_VOICE_ALLOW_INSECURE_TAILSCALE_SPARK") {
+        config.allow_insecure_tailscale_spark =
+            boolean_override(value, "PASEO_VOICE_ALLOW_INSECURE_TAILSCALE_SPARK")?;
     }
     if config.proposal_ttl_ms == 0 {
         return Err("proposal TTL must be positive".to_owned());
@@ -306,7 +309,10 @@ fn validate_realtime_url(value: &str) -> Result<ValidatedEndpoint, String> {
     Ok(ValidatedEndpoint { url, location })
 }
 
-fn validate_summariser_url(value: &str) -> Result<ValidatedEndpoint, String> {
+fn validate_summariser_url(
+    value: &str,
+    allow_insecure_tailscale: bool,
+) -> Result<ValidatedEndpoint, String> {
     if value.chars().any(char::is_whitespace) || !has_nonempty_authority(value) {
         return Err("invalid summariser base URL".to_owned());
     }
@@ -322,9 +328,11 @@ fn validate_summariser_url(value: &str) -> Result<ValidatedEndpoint, String> {
         .host_str()
         .ok_or_else(|| "invalid summariser base URL".to_owned())?;
     let loopback = is_loopback_host(host);
+    let tailscale = is_tailscale_ipv4(host);
     match url.scheme() {
         "https" => {}
         "http" if loopback => {}
+        "http" if allow_insecure_tailscale && tailscale => {}
         "http" => return Err("remote summariser base URL must use https".to_owned()),
         _ => return Err("invalid summariser base URL".to_owned()),
     }
@@ -365,6 +373,13 @@ fn is_loopback_host(host: &str) -> bool {
         || host
             .parse::<IpAddr>()
             .is_ok_and(|address| address.is_loopback())
+}
+
+fn is_tailscale_ipv4(host: &str) -> bool {
+    host.parse::<std::net::Ipv4Addr>().is_ok_and(|address| {
+        let [first, second, ..] = address.octets();
+        first == 100 && (64..=127).contains(&second)
+    })
 }
 
 fn validate_paseo_hosts(config: &mut Config) -> Result<(), String> {
@@ -446,13 +461,21 @@ fn number_override<T: std::str::FromStr>(
     })
 }
 
+fn boolean_override(value: &str, name: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => Err(format!("{name} is invalid")),
+    }
+}
+
 impl Config {
     pub(crate) fn realtime_endpoint(&self) -> Result<ValidatedEndpoint, String> {
         validate_realtime_url(&self.openai_base_url)
     }
 
     pub(crate) fn summariser_endpoint(&self) -> Result<ValidatedEndpoint, String> {
-        validate_summariser_url(&self.spark_base_url)
+        validate_summariser_url(&self.spark_base_url, self.allow_insecure_tailscale_spark)
     }
 
     /// Convert provider fields for the secret resolver.

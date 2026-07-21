@@ -82,13 +82,16 @@ approved.
 
 ### Endpoint and credential isolation
 
-Secrets are resolved once at startup from one selected provider: Bitwarden Secrets Manager,
-1Password CLI, or the process environment. Values remain in memory and are excluded from logs.
+OpenAI and Paseo secrets are resolved once at startup from one selected provider: Bitwarden Secrets
+Manager, 1Password CLI, or the process environment. The separate model bearer is a narrow process
+environment input that is not forwarded to secret-manager children. Values remain in memory and
+are excluded from logs.
 
-The OpenAI bearer is sent only to the exact official Realtime endpoint. Custom Realtime and model
-endpoints receive no configured credential. Plain transport is loopback-only; non-loopback endpoints
-require TLS. The shared model HTTP client disables redirects and ambient proxies so content is not
-forwarded to an unapproved destination.
+The OpenAI bearer is sent only to the exact official Realtime endpoint. The model bearer is sent
+only by the shared summarisation and dictation-cleanup HTTP client. Plain model HTTP remains
+loopback-only unless the operator explicitly opts in to a Tailscale IPv4 endpoint. Other
+non-loopback endpoints require TLS. The model HTTP client disables redirects and ambient proxies so
+content is not forwarded to an unapproved destination.
 
 ### Trusted host profiles
 
@@ -148,8 +151,8 @@ configuration or runtime content.
 - Automatic completion detection requires a stable Paseo completion or reply marker.
 - Exactly-once delivery requires receiver-recognised idempotency and an authoritative receipt.
 - Remote use requires authentication, encrypted transport, and an approved origin policy.
-- Provider catalogues, authenticated custom endpoints, and local model lifecycle management need a
-  focused design before implementation.
+- Provider catalogues and local model lifecycle management need a focused design before
+  implementation.
 - Per-profile credentials and editable new-session defaults remain deferred.
 - Any durable user content or correction learning requires an explicit retention and deletion
   policy.

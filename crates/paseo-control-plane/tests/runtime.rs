@@ -1259,6 +1259,7 @@ async fn start_injected_realtime_browser_with_hosts_process_and_cleaner(
             config,
             Secrets {
                 openai_api_key: api_key,
+                spark_api_key: None,
                 paseo_password,
             },
             RuntimeDependencies {
@@ -25663,6 +25664,7 @@ async fn panicking_dictation_cleanup_emits_correlated_failure_and_ready() {
             config,
             Secrets {
                 openai_api_key: Some("test-key".to_owned()),
+                spark_api_key: None,
                 paseo_password: Some("test-password".to_owned()),
             },
             RuntimeDependencies {

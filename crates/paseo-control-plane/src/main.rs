@@ -65,7 +65,7 @@ async fn main() -> ExitCode {
                 );
             }
             let result = if serve {
-                match runtime::build_model_http_client() {
+                match runtime::build_model_http_client(secrets.spark_api_key.as_deref()) {
                     Ok(http_client) => {
                         let address = format!("{}:{}", config.listen_host, config.listen_port);
                         match tokio::net::TcpListener::bind(&address).await {

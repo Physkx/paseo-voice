@@ -40,8 +40,17 @@ const MAX_TERMINAL_DICTATION_IDS: usize = 64;
 /// # Errors
 ///
 /// Returns a bounded startup error if the client cannot be constructed.
-pub fn build_model_http_client() -> Result<reqwest::Client, String> {
+pub fn build_model_http_client(api_key: Option<&str>) -> Result<reqwest::Client, String> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(api_key) = api_key {
+        let mut authorization =
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
+                .map_err(|_| "invalid model API credential".to_owned())?;
+        authorization.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, authorization);
+    }
     reqwest::Client::builder()
+        .default_headers(headers)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()

@@ -162,20 +162,25 @@ transcripts, previews, drafts, cleanup output, and device labels remain ephemera
 Rust loads `~/.config/paseo-voice/config.json`, applies `PASEO_VOICE_*` environment overrides, and
 validates endpoint and host-profile configuration before opening the listener.
 
-One secret provider is selected for the process:
+One secret provider is selected for the OpenAI and Paseo credentials:
 
 - Bitwarden Secrets Manager is the default and resolves configured IDs through `bws`.
 - 1Password resolves configured references through `op read` and inherits the environment needed
   for desktop or service-account authentication.
-- Environment mode reads `OPENAI_API_KEY` and `PASEO_PASSWORD` directly.
+- Environment mode reads `OPENAI_API_KEY`, `PASEO_VOICE_SPARK_API_KEY`, and `PASEO_PASSWORD`
+  directly.
+
+The model endpoint uses its own optional bearer from `PASEO_VOICE_SPARK_API_KEY`. This is a narrow
+environment input even if another provider supplies the OpenAI and Paseo credentials, and it is not
+forwarded to their child processes.
 
 Paseo and Bitwarden receive narrow child environments. Paseo receives its password through the child
 environment, never an argument. Secret values and process output content are excluded from logs.
 
-The official Realtime endpoint alone receives the OpenAI bearer. Custom endpoints receive no
-configured authentication. URL credentials, configured queries, fragments, unsupported schemes,
-and plaintext non-loopback transport are rejected. Model HTTP redirects and ambient proxies are
-disabled.
+The official Realtime endpoint alone receives the OpenAI bearer. The model HTTP client receives
+only the separate model bearer. URL credentials, configured queries, fragments, and unsupported
+schemes are rejected. Plaintext model HTTP is limited to loopback or an explicitly opted-in
+Tailscale IPv4 address. Model HTTP redirects and ambient proxies are disabled.
 
 ## Process and recovery boundary
 

@@ -109,12 +109,17 @@ Select one provider for the process with `secretProvider` or
 `PASEO_VOICE_SECRET_PROVIDER`: `bitwarden`, `onepassword`, or `environment`. Bitwarden is the
 default.
 
-- `environment` reads `OPENAI_API_KEY` and `PASEO_PASSWORD`. Start from [.env.example](.env.example)
-  and load it through your shell or secret manager; the application does not load `.env` files.
+- `environment` reads `OPENAI_API_KEY`, `PASEO_VOICE_SPARK_API_KEY`, and `PASEO_PASSWORD`. Start
+  from [.env.example](.env.example) and load it through your shell or secret manager; the
+  application does not load `.env` files.
 - `bitwarden` reads a Secrets Manager token from `~/.config/bws.env` and resolves the configured
   `bwsSecretIdOpenai` and `bwsSecretIdPaseo` values.
 - `onepassword` resolves the configured `onePasswordSecretRefOpenai` and
   `onePasswordSecretRefPaseo` references through `op read`.
+
+`PASEO_VOICE_SPARK_API_KEY` always supplies only the model-endpoint bearer. It is a narrow
+environment input even when Bitwarden or 1Password supplies the OpenAI and Paseo credentials, and
+it is not forwarded to their child processes.
 
 Secrets are resolved once at startup. Missing OpenAI credentials affect Realtime only; missing
 Paseo credentials disable Paseo tools without preventing the server from starting. Restart after
@@ -122,10 +127,12 @@ secret rotation.
 
 ### Endpoint policy
 
-The OpenAI bearer token is sent only to the exact official Realtime endpoint. Custom endpoints
-receive no configured authentication. Plain `ws://` and `http://` endpoints are accepted only on
-loopback; remote endpoints require `wss://` and `https://`. Redirects and ambient HTTP proxy
-discovery are disabled for summarisation and dictation cleanup.
+The OpenAI bearer token is sent only to the exact official Realtime endpoint. The separate Spark
+bearer is sent only through the model HTTP client used for summarisation and dictation cleanup.
+Plain `ws://` is accepted only on loopback. Plain model `http://` is accepted on loopback, or for a
+Tailscale IPv4 address when `allowInsecureTailscaleSpark` or
+`PASEO_VOICE_ALLOW_INSECURE_TAILSCALE_SPARK=true` explicitly opts in. Other remote endpoints
+require `wss://` and `https://`. Model redirects and ambient HTTP proxy discovery are disabled.
 
 ## Safety model
 

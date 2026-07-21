@@ -41,6 +41,8 @@ pub struct SecretConfig {
 pub struct Secrets {
     /// Realtime API credential, or none for mock mode.
     pub openai_api_key: Option<String>,
+    /// Summarisation and dictation-cleanup API credential, or none.
+    pub spark_api_key: Option<String>,
     /// Paseo credential, or none for read/write unavailable mode.
     pub paseo_password: Option<String>,
 }
@@ -56,6 +58,7 @@ pub fn load_secrets<E: ProcessExecutor>(
     match config.provider {
         SecretProvider::Environment => Secrets {
             openai_api_key: nonempty(environment.get("OPENAI_API_KEY")),
+            spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
             paseo_password: nonempty(environment.get("PASEO_PASSWORD")),
         },
         SecretProvider::Bitwarden => {
@@ -65,6 +68,7 @@ pub fn load_secrets<E: ProcessExecutor>(
             let Some(token) = token else {
                 return Secrets {
                     openai_api_key: None,
+                    spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
                     paseo_password: None,
                 };
             };
@@ -73,6 +77,7 @@ pub fn load_secrets<E: ProcessExecutor>(
                     .bws_openai_id
                     .as_deref()
                     .and_then(|id| read_bws(executor, &config.bws_binary, id, &token, environment)),
+                spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
                 paseo_password: config
                     .bws_paseo_id
                     .as_deref()
@@ -84,13 +89,24 @@ pub fn load_secrets<E: ProcessExecutor>(
                 .onepassword_openai_ref
                 .as_deref()
                 .and_then(|reference| {
-                    read_onepassword(executor, &config.onepassword_binary, reference, environment)
+                    read_onepassword(
+                        executor,
+                        &config.onepassword_binary,
+                        reference,
+                        &onepassword_environment(environment),
+                    )
                 }),
+            spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
             paseo_password: config
                 .onepassword_paseo_ref
                 .as_deref()
                 .and_then(|reference| {
-                    read_onepassword(executor, &config.onepassword_binary, reference, environment)
+                    read_onepassword(
+                        executor,
+                        &config.onepassword_binary,
+                        reference,
+                        &onepassword_environment(environment),
+                    )
                 }),
         },
     }
@@ -98,6 +114,12 @@ pub fn load_secrets<E: ProcessExecutor>(
 
 fn nonempty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
+}
+
+fn onepassword_environment(environment: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut environment = environment.clone();
+    environment.remove("PASEO_VOICE_SPARK_API_KEY");
+    environment
 }
 
 /// Parse a Bitwarden token assignment without sourcing a shell file.

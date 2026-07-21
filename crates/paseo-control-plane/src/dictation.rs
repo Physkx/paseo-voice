@@ -753,7 +753,7 @@ mod tests {
                 .expect("serve cleanup redirect");
         });
         let cleaner = HttpDictationCleaner {
-            client: crate::runtime::build_model_http_client().expect("production HTTP client"),
+            client: crate::runtime::build_model_http_client(None).expect("production HTTP client"),
             endpoint: format!("http://{redirect_address}/chat/completions"),
             model: "test-model".to_owned(),
         };

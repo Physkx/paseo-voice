@@ -201,6 +201,42 @@ fn plaintext_remote_summariser_endpoint_is_rejected_at_config_load() {
 }
 
 #[test]
+fn plaintext_tailscale_summariser_requires_explicit_opt_in() {
+    let endpoint = format!("http://{}.{}.{}.{}:1234/v1", 100, 100, 20, 30);
+    let rejected = HashMap::from([("PASEO_VOICE_SPARK_BASE_URL".to_owned(), endpoint.clone())]);
+    assert_eq!(
+        config::load(&rejected).expect_err("plaintext Tailscale endpoint rejected by default"),
+        "remote summariser base URL must use https"
+    );
+
+    let accepted = HashMap::from([
+        ("PASEO_VOICE_SPARK_BASE_URL".to_owned(), endpoint.clone()),
+        (
+            "PASEO_VOICE_ALLOW_INSECURE_TAILSCALE_SPARK".to_owned(),
+            "true".to_owned(),
+        ),
+    ]);
+    let loaded = config::load(&accepted).expect("explicit Tailscale endpoint opt-in");
+    assert_eq!(loaded.spark_base_url, endpoint);
+    assert!(loaded.allow_insecure_tailscale_spark);
+
+    let non_tailscale = HashMap::from([
+        (
+            "PASEO_VOICE_SPARK_BASE_URL".to_owned(),
+            "http://models.example:1234/v1".to_owned(),
+        ),
+        (
+            "PASEO_VOICE_ALLOW_INSECURE_TAILSCALE_SPARK".to_owned(),
+            "true".to_owned(),
+        ),
+    ]);
+    assert_eq!(
+        config::load(&non_tailscale).expect_err("opt-in is limited to Tailscale IPv4"),
+        "remote summariser base URL must use https"
+    );
+}
+
+#[test]
 fn embedded_endpoint_credentials_are_rejected_at_config_load() {
     for (name, value, error) in [
         (
@@ -488,10 +524,15 @@ fn environment_secret_provider_preserves_exact_values_and_empty_is_missing() {
     };
     let environment = HashMap::from([
         ("OPENAI_API_KEY".to_owned(), "  exact-key\n".to_owned()),
+        (
+            "PASEO_VOICE_SPARK_API_KEY".to_owned(),
+            "test-model-key".to_owned(),
+        ),
         ("PASEO_PASSWORD".to_owned(), String::new()),
     ]);
     let secrets = load_secrets(&config, &executor, &environment);
     assert_eq!(secrets.openai_api_key.as_deref(), Some("  exact-key\n"));
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("test-model-key"));
     assert!(secrets.paseo_password.is_none());
     assert!(executor.calls.lock().expect("calls lock").is_empty());
 }
@@ -529,6 +570,7 @@ fn bitwarden_passes_essential_os_variables_and_token_to_the_bws_child() {
     ]);
     let secrets = load_secrets(&config, &executor, &environment);
     assert_eq!(secrets.openai_api_key.as_deref(), Some("sk-openai"));
+    assert!(secrets.spark_api_key.is_none());
     assert_eq!(secrets.paseo_password.as_deref(), Some("paseo-password"));
 
     let calls = executor.calls.lock().expect("calls lock");
@@ -546,6 +588,32 @@ fn bitwarden_passes_essential_os_variables_and_token_to_the_bws_child() {
     assert!(env.contains_key("BWS_ACCESS_TOKEN"));
     // Unrelated process variables are never forwarded to the child.
     assert!(!env.contains_key("UNRELATED_SECRET"));
+}
+
+#[test]
+fn bitwarden_provider_accepts_environment_fallback_for_local_model_key() {
+    let executor = FakeExecutor {
+        outputs: Mutex::default(),
+        calls: Mutex::default(),
+    };
+    let config = SecretConfig {
+        provider: SecretProvider::Bitwarden,
+        bws_binary: "bws".to_owned(),
+        bws_env_file: "missing-token-file".into(),
+        bws_openai_id: None,
+        bws_paseo_id: None,
+        onepassword_binary: "op".to_owned(),
+        onepassword_openai_ref: None,
+        onepassword_paseo_ref: None,
+    };
+    let environment = HashMap::from([(
+        "PASEO_VOICE_SPARK_API_KEY".to_owned(),
+        "test-model-key".to_owned(),
+    )]);
+
+    let secrets = load_secrets(&config, &executor, &environment);
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("test-model-key"));
+    assert!(executor.calls.lock().expect("calls lock").is_empty());
 }
 
 #[test]
@@ -567,12 +635,24 @@ fn onepassword_reads_sequentially_and_never_logs_or_transforms_values() {
         onepassword_openai_ref: Some("op://vault/openai/key".to_owned()),
         onepassword_paseo_ref: Some("op://vault/paseo/password".to_owned()),
     };
-    let environment = HashMap::from([("PATH".to_owned(), "/bin".to_owned())]);
+    let environment = HashMap::from([
+        ("PATH".to_owned(), "/bin".to_owned()),
+        (
+            "PASEO_VOICE_SPARK_API_KEY".to_owned(),
+            "unused-fallback".to_owned(),
+        ),
+    ]);
     let secrets = load_secrets(&config, &executor, &environment);
     assert_eq!(secrets.openai_api_key.as_deref(), Some("  openai\n"));
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("unused-fallback"));
     assert_eq!(secrets.paseo_password.as_deref(), Some("  paseo\t"));
     let calls = executor.calls.lock().expect("calls lock");
     assert_eq!(calls.len(), 2);
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.2.contains_key("PASEO_VOICE_SPARK_API_KEY"))
+    );
     assert_eq!(
         calls[0].1,
         ["read", "--format", "json", "op://vault/openai/key"]

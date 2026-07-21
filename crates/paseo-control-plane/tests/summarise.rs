@@ -332,7 +332,7 @@ async fn production_client_does_not_redirect_agent_output() {
     };
 
     let result = summarise_for_speech(
-        &build_model_http_client().expect("production HTTP client"),
+        &build_model_http_client(None).expect("production HTTP client"),
         &config,
         "redirect-sensitive agent output",
         Some("Example session"),
@@ -367,7 +367,7 @@ async fn model_http_client_proxy_subprocess() {
         summarise_threshold_chars: 3,
         ..Config::default()
     };
-    let client = build_model_http_client().expect("production HTTP client");
+    let client = build_model_http_client(None).expect("production HTTP client");
     let cleaner = HttpDictationCleaner::new(client.clone(), &config);
 
     let cleanup = cleaner
@@ -502,7 +502,7 @@ async fn production_model_client_ignores_ambient_proxies() {
 
 #[test]
 fn production_client_constructs_secure_remote_request_without_network() {
-    let request = build_model_http_client()
+    let request = build_model_http_client(None)
         .expect("production HTTP client")
         .post("https://models.example/v1/chat/completions")
         .json(&serde_json::json!({"model":"configured-model"}))
@@ -512,6 +512,40 @@ fn production_client_constructs_secure_remote_request_without_network() {
     assert_eq!(request.url().scheme(), "https");
     assert_eq!(request.url().host_str(), Some("models.example"));
     assert_eq!(request.url().path(), "/v1/chat/completions");
+}
+
+#[tokio::test]
+async fn production_client_sends_configured_bearer_to_model_endpoint() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("authenticated model listener");
+    let address = listener.local_addr().expect("authenticated model address");
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|headers: axum::http::HeaderMap| async move {
+            assert_eq!(
+                headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok()),
+                Some("Bearer test-model-key")
+            );
+            StatusCode::NO_CONTENT
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve authenticated model endpoint");
+    });
+
+    let response = build_model_http_client(Some("test-model-key"))
+        .expect("authenticated production HTTP client")
+        .post(format!("http://{address}/v1/chat/completions"))
+        .send()
+        .await
+        .expect("authenticated model request");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    server.abort();
 }
 
 #[tokio::test]
