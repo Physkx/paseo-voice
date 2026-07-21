@@ -12,6 +12,7 @@ use paseo_control_plane::{
 };
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
     let mut args = env::args_os().skip(1);
     match (args.next(), args.next()) {
@@ -46,6 +47,16 @@ async fn main() -> ExitCode {
                 }
             };
             let secrets = load_secrets(&secret_config, &SystemProcessExecutor, &environment);
+            let default_voice_credential = config
+                .default_voice_profile()
+                .credential_ref
+                .as_ref()
+                .and_then(|id| secrets.api_credentials.get(id));
+            let summarisation_credential = config
+                .summarisation
+                .credential_ref
+                .as_ref()
+                .and_then(|id| secrets.api_credentials.get(id));
             if matches!(config.log_level.as_str(), "debug" | "info") {
                 eprintln!(
                     "{}",
@@ -54,16 +65,15 @@ async fn main() -> ExitCode {
                         "event": "runtime_starting",
                         "mode": runtime::realtime_mode(
                             &config,
-                            secrets.openai_api_key.as_deref(),
+                            default_voice_credential.map(String::as_str),
                         ),
                         "paseo_tools": if secrets.paseo_password.is_some() {
                             "available"
                         } else {
                             "unavailable"
                         },
-                        "model_base": config.spark_base_url,
-                        "model_id": config.spark_model,
-                        "model_credentials": if secrets.spark_api_key.is_some() {
+                        "summarisation_model_id": config.summarisation.model,
+                        "summarisation_credentials": if summarisation_credential.is_some() {
                             "available"
                         } else {
                             "unavailable"
@@ -72,14 +82,37 @@ async fn main() -> ExitCode {
                 );
             }
             let result = if serve {
-                match runtime::build_model_http_client(secrets.spark_api_key.as_deref()) {
+                match runtime::build_model_http_client(summarisation_credential.map(String::as_str))
+                {
                     Ok(http_client) => {
                         let address = format!("{}:{}", config.listen_host, config.listen_port);
                         match tokio::net::TcpListener::bind(&address).await {
                             Ok(listener) => {
-                                let dictation_cleaner = std::sync::Arc::new(
-                                    HttpDictationCleaner::new(http_client.clone(), &config),
-                                );
+                                let mut dictation_cleaners = HashMap::new();
+                                for profile in &config.cleanup_profiles {
+                                    let credential = profile
+                                        .credential_ref
+                                        .as_ref()
+                                        .and_then(|id| secrets.api_credentials.get(id))
+                                        .or_else(|| {
+                                            (profile.base_url == "https://api.x.ai/v1")
+                                                .then_some(secrets.grok_oauth_token.as_ref())
+                                                .flatten()
+                                        });
+                                    let cleanup_client = match runtime::build_model_http_client(
+                                        credential.map(String::as_str),
+                                    ) {
+                                        Ok(client) => client,
+                                        Err(error) => return finish_error(&error),
+                                    };
+                                    dictation_cleaners.insert(
+                                        profile.id.clone(),
+                                        std::sync::Arc::new(HttpDictationCleaner::new(
+                                            cleanup_client,
+                                            profile,
+                                        )) as std::sync::Arc<dyn paseo_control_plane::dictation::DictationCleaner>,
+                                    );
+                                }
                                 runtime::serve(
                                     config,
                                     secrets,
@@ -89,7 +122,7 @@ async fn main() -> ExitCode {
                                         realtime_connector: std::sync::Arc::new(
                                             SystemRealtimeConnector,
                                         ),
-                                        dictation_cleaner,
+                                        dictation_cleaners,
                                         process_executor: std::sync::Arc::new(
                                             SystemProcessExecutor,
                                         ),
@@ -119,4 +152,9 @@ async fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn finish_error(error: &str) -> ExitCode {
+    eprintln!("runtime stopped: {error}");
+    ExitCode::from(1)
 }

@@ -67,6 +67,19 @@
             </label>
           </section>
 
+          <section class="profile-controls" aria-label="Voice and dictation routing profiles">
+            <label for="voice-profile-select">
+              Voice API profile
+              <select id="voice-profile-select" disabled></select>
+              <small id="voice-profile-detail">Waiting for broker</small>
+            </label>
+            <label for="cleanup-profile-select">
+              Dictation cleanup profile
+              <select id="cleanup-profile-select" disabled></select>
+              <small id="cleanup-profile-detail">Waiting for broker</small>
+            </label>
+          </section>
+
           <button id="ptt" class="ptt" disabled aria-describedby="ptt-hint">
             <span id="ptt-label">Hold to talk</span>
             <span id="ptt-hint">Or hold the space bar</span>

@@ -10,6 +10,7 @@ pub mod dictation;
 pub mod journal;
 pub mod paseo;
 pub mod protocol;
+pub mod provider;
 pub mod realtime;
 pub mod runtime;
 pub mod secrets;

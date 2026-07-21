@@ -7,11 +7,11 @@ This document describes the current runtime. Security invariants are normative i
 
 ```text
 Secret-free browser
-  | local HTTP and protocol-v2 WebSocket
+  | local HTTP and protocol-v3 WebSocket
   v
 Rust paseo-control-plane
-  | OpenAI Realtime WebSocket
-  | OpenAI-compatible summary and cleanup HTTP
+  | selected OpenAI, xAI, or compatible Realtime WebSocket
+  | fixed summary HTTP plus selected cleanup-profile HTTP
   | direct paseo, bws, or op child processes
   | content-free SQLite operation journal
   v
@@ -39,11 +39,12 @@ authentication.
 
 ## Browser session
 
-Each browser connection owns its selected host, trusted interaction sequence, active summary
-context, voice mode, recording sequence, session-creation task collection, and pending proposal
-presentation. Reconnect starts from the configured default host and inherits none of that state.
+Each browser connection owns its selected host, voice profile, cleanup profile, provider generation,
+trusted interaction sequence, active summary context, voice mode, recording sequence,
+session-creation task collection, and pending proposal presentation. Reconnect starts from the
+configured defaults and inherits none of that selection or content state.
 
-The browser must send the exact protocol version 2 hello within five seconds. Typed turns carry a
+The browser must send the exact protocol version 3 hello within five seconds. Typed turns carry a
 strictly increasing turn ID and the displayed summary ID or explicit null context. Push-to-talk
 recordings use their own strictly increasing IDs. Stale or mismatched context is rejected before
 content reaches Realtime or the tool engine.
@@ -52,9 +53,10 @@ Binary frames contain PCM16 audio at 24 kHz. Browser and broker buffers are boun
 accepted recording clears provider input, retires active playback, and sends an ordered playback
 flush to support barge-in.
 
-The dashboard receives bounded presentation data: safe host and session labels, provider and state
-labels, one active short summary, routing text, and queue counts. It never receives daemon targets,
-credentials, raw Paseo rows, logs, or the internal confirmation token.
+The dashboard receives bounded presentation data: safe host and session labels, safe voice and
+cleanup profile metadata, derived processing locations, provider and state labels, one active short
+summary, routing text, and queue counts. It never receives endpoint URLs, credential IDs, secret
+references, secrets, daemon targets, raw Paseo rows, logs, or the internal confirmation token.
 
 ## Tool surface
 
@@ -101,6 +103,18 @@ profile.
 
 ## Realtime lifecycle
 
+The provider adapter owns handshake construction, exact credential attachment, session shape,
+model, voice, transcription model, provider-specific event normalization, and capability
+declarations. Official OpenAI and xAI endpoints are exact-pinned. Compatible loopback endpoints may
+be keyless and remote compatible endpoints require WSS. xAI cumulative
+`conversation.item.input_audio_transcription.updated` events become replacement previews.
+
+The connection supervisor keeps the browser socket alive while an idle voice-profile switch closes
+and retires the old provider, advances a generation, clears provider and content-bound transient
+state, invalidates any unconfirmed proposal and summary, preserves the selected Paseo host, and
+connects the selected profile. Work from a retired generation cannot publish. A confirmed write
+dispatch is never interrupted or retried.
+
 The broker correlates provider responses, items, function calls, audio commits, and transcription by
 broker-owned state and bounded single-use IDs. OpenAI Realtime does not correlate every server event
 to a client event, so the broker permits only one unresolved response creation and one unresolved
@@ -140,10 +154,12 @@ but commits audio only for English transcription. It does not call `response.cre
 or create a proposal.
 
 One recording, transcription, or cleanup operation may exist per connection. The browser captures
-the draft, selection, host, field, and immutable summary ID when recording begins. Cleanup uses a
-strict editing-only prompt and a 12-second model request timeout. A successful bounded raw transcript
-is used with a degraded warning if cleanup fails; no speech or transcription failure leaves the
-draft unchanged.
+the draft, selection, host, field, and immutable summary ID when recording begins. Rust binds the
+operation to its recording ID, operation ID, host, summary, provider generation, and selected
+cleanup profile. Cleanup uses that profile's isolated client, a strict editing-only prompt, and a
+12-second request timeout. A successful bounded raw transcript is used with a degraded warning if
+cleanup fails. No other profile is tried, and no speech or transcription failure leaves the draft
+changed.
 
 Insertion is atomic at the captured selection. A changed field or selection requires explicit
 Insert or Discard review. A changed host or summary discards the result. Cancel restores the original
@@ -159,28 +175,31 @@ transcripts, previews, drafts, cleanup output, and device labels remain ephemera
 
 ## Configuration and secrets
 
-Rust loads `~/.config/paseo-voice/config.json`, applies `PASEO_VOICE_*` environment overrides, and
-validates endpoint and host-profile configuration before opening the listener.
+Rust loads `~/.config/paseo-voice/config.json`, applies unrelated runtime `PASEO_VOICE_*`
+environment overrides, and validates endpoint, profile, credential, private-host allowlist, and
+host-profile configuration before opening the listener. Legacy OpenAI and Spark routing and secret
+fields are rejected instead of migrated.
 
-One secret provider is selected for the OpenAI and Paseo credentials:
+One secret provider resolves the named API credential catalogue plus the separate Paseo password:
 
 - Bitwarden Secrets Manager is the default and resolves configured IDs through `bws`.
 - 1Password resolves configured references through `op read` and inherits the environment needed
   for desktop or service-account authentication.
-- Environment mode reads `OPENAI_API_KEY`, `PASEO_VOICE_SPARK_API_KEY`, and `PASEO_PASSWORD`
-  directly.
+- Environment mode reads only each configured `environmentVariable` and `PASEO_PASSWORD`.
 
-The model endpoint uses its own optional bearer from `PASEO_VOICE_SPARK_API_KEY`. This is a narrow
-environment input even if another provider supplies the OpenAI and Paseo credentials, and it is not
-forwarded to their child processes.
+Named credentials are resolved once into a bounded broker-only map keyed by credential ID. A
+profile receives only the credential it explicitly references. The Grok CLI OAuth store remains a
+separate optional fallback only for exact xAI dictation cleanup and is never used for voice or fixed
+summarisation.
 
 Paseo and Bitwarden receive narrow child environments. Paseo receives its password through the child
 environment, never an argument. Secret values and process output content are excluded from logs.
 
-The official Realtime endpoint alone receives the OpenAI bearer. The model HTTP client receives
-only the separate model bearer. URL credentials, configured queries, fragments, and unsupported
-schemes are rejected. Plaintext model HTTP is limited to loopback or an explicitly opted-in
-Tailscale IPv4 address. Model HTTP redirects and ambient proxies are disabled.
+URL credentials, configured queries, fragments, and unsupported schemes are rejected. Processing
+location is derived from the exact validated host as `local`, `private_remote`, or `cloud`.
+Plaintext model HTTP is limited to loopback or an explicitly opted-in Tailscale IPv4 or exact
+broker-allowlisted host. Separate no-proxy, no-redirect clients keep credentials bound to their one
+validated model endpoint.
 
 ## Process and recovery boundary
 

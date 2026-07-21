@@ -4,7 +4,7 @@ use std::{collections::VecDeque, future::Future, pin::Pin, time::Duration};
 
 use serde_json::{Value, json};
 
-use crate::config::Config;
+use crate::config::{CleanupProfile, Config};
 
 const MAX_TRANSCRIPT_CHARS: usize = 32_000;
 const MAX_CLEANED_CHARS: usize = 32_000;
@@ -22,26 +22,40 @@ const CLEANUP_INSTRUCTIONS: &str = concat!(
 
 /// Browser-safe dictation capability metadata without endpoints or credentials.
 #[must_use]
-pub fn capability_frame(config: &Config, live: bool) -> Value {
-    let speech_location = config
-        .realtime_endpoint()
-        .map_or("Unavailable", |endpoint| endpoint.location.label());
-    let cleanup_location = config
-        .summariser_endpoint()
-        .map_or("Unavailable", |endpoint| endpoint.location.label());
+pub fn capability_frame(
+    config: &Config,
+    voice_profile_id: &str,
+    cleanup_profile_id: &str,
+    live: bool,
+) -> Value {
+    let voice = config
+        .voice_profiles
+        .iter()
+        .find(|profile| profile.id == voice_profile_id);
+    let cleanup = config
+        .cleanup_profiles
+        .iter()
+        .find(|profile| profile.id == cleanup_profile_id);
+    let speech_location = voice
+        .and_then(|profile| config.voice_endpoint(profile).ok())
+        .map_or("unavailable", |endpoint| endpoint.location.label());
+    let cleanup_location = cleanup
+        .and_then(|profile| config.cleanup_endpoint(profile).ok())
+        .map_or("unavailable", |endpoint| endpoint.location.label());
+    let dictation_supported = voice.is_some();
     json!({
         "type":"dictation_capabilities",
         "speech_to_text":{
             "id":"realtime-english",
             "label":"Realtime English transcription",
-            "model_id":"gpt-4o-mini-transcribe",
+            "model_id":voice.map_or("", |profile| profile.transcription_model.as_str()),
             "processing_location":speech_location,
-            "status":if live { "configured" } else { "unavailable_in_mock_mode" }
+            "status":if !live { "unavailable_in_mock_mode" } else if dictation_supported { "configured" } else { "unavailable_provider_capability" }
         },
         "cleanup":{
-            "id":"configured-cleanup",
-            "label":"Configured cleanup",
-            "model_id":config.spark_model,
+            "id":cleanup_profile_id,
+            "label":cleanup.map_or("Unavailable", |profile| profile.label.as_str()),
+            "model_id":cleanup.map_or("", |profile| profile.model.as_str()),
             "processing_location":cleanup_location,
             "status":if live { "configured_not_health_checked" } else { "unavailable_in_mock_mode" }
         }
@@ -226,14 +240,14 @@ pub struct HttpDictationCleaner {
 impl HttpDictationCleaner {
     /// Construct the production cleanup adapter from existing model configuration.
     #[must_use]
-    pub fn new(client: reqwest::Client, config: &Config) -> Self {
+    pub fn new(client: reqwest::Client, profile: &CleanupProfile) -> Self {
         Self {
             client,
             endpoint: format!(
                 "{}/chat/completions",
-                config.spark_base_url.trim_end_matches('/')
+                profile.base_url.trim_end_matches('/')
             ),
-            model: config.spark_model.clone(),
+            model: profile.model.clone(),
         }
     }
 }
@@ -311,6 +325,10 @@ fn fallback(raw: &str) -> DictationCleanup {
         text: raw.chars().take(MAX_CLEANED_CHARS).collect(),
         degraded: true,
     }
+}
+
+pub(crate) fn degraded_cleanup(transcript: &str) -> Option<DictationCleanup> {
+    bounded_non_empty(transcript).map(|raw| fallback(&raw))
 }
 
 #[cfg(test)]
@@ -504,41 +522,62 @@ mod tests {
             (
                 "wss://api.openai.com/v1/realtime/",
                 "http://localhost:1234/v1",
-                "OpenAI cloud",
-                "Broker-configured local endpoint",
+                "cloud",
+                "local",
             ),
             (
                 "ws://127.0.0.2:8080/realtime",
                 "https://models.example/v1",
-                "Broker-configured local endpoint",
-                "Broker-configured remote endpoint",
+                "local",
+                "cloud",
             ),
             (
                 "wss://realtime.example/v1/realtime",
                 "http://[::1]:1234/v1",
-                "Broker-configured remote endpoint",
-                "Broker-configured local endpoint",
+                "cloud",
+                "local",
             ),
             (
                 "wss://api.openai.com/v1/realtime",
                 "https://api.x.ai/v1",
-                "OpenAI cloud",
-                "xAI cloud",
+                "cloud",
+                "cloud",
             ),
             (
                 "wss://api.openai.com/v1/realtime",
                 "https://api.x.ai/v1/",
-                "OpenAI cloud",
-                "xAI cloud",
+                "cloud",
+                "cloud",
             ),
         ] {
             let config = Config {
-                openai_base_url: realtime.to_owned(),
-                spark_base_url: cleanup.to_owned(),
-                spark_model: "approved-model".to_owned(),
+                voice_profiles: vec![crate::config::VoiceProfile {
+                    id: "voice".to_owned(),
+                    label: "Voice".to_owned(),
+                    provider_type: if realtime == "wss://api.openai.com/v1/realtime" {
+                        crate::config::VoiceProviderType::Openai
+                    } else {
+                        crate::config::VoiceProviderType::OpenaiCompatible
+                    },
+                    base_url: realtime.to_owned(),
+                    model: "voice-model".to_owned(),
+                    voice: "voice".to_owned(),
+                    transcription_model: "transcribe".to_owned(),
+                    credential_ref: None,
+                    default: true,
+                }],
+                cleanup_profiles: vec![CleanupProfile {
+                    id: "cleanup".to_owned(),
+                    label: "Cleanup".to_owned(),
+                    base_url: cleanup.to_owned(),
+                    model: "approved-model".to_owned(),
+                    credential_ref: None,
+                    default: true,
+                    allow_insecure_private_http: false,
+                }],
                 ..Config::default()
             };
-            let frame = capability_frame(&config, true);
+            let frame = capability_frame(&config, "voice", "cleanup", true);
             assert_eq!(
                 frame["speech_to_text"]["processing_location"],
                 expected_realtime

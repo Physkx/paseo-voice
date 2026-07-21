@@ -715,6 +715,13 @@ impl<E: ProcessExecutor> ToolEngine<E> {
         self.selected = None;
     }
 
+    /// Invalidate all response and proposal state while preserving the selected Paseo host.
+    pub(crate) fn invalidate_for_voice_switch(&mut self) {
+        self.invalidate_active_response();
+        self.pending_run = None;
+        self.session_task_collection_started = None;
+    }
+
     fn paseo(&self) -> Option<&PaseoAdapter<E>> {
         self.hosts.get(self.selected_host)?.paseo.as_ref()
     }

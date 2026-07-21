@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { createAppHarness } from "./helpers/fake-browser.mjs";
 
-const hello = { type: "hello", protocol_version: 2 };
+const hello = { type: "hello", protocol_version: 3 };
 
 function hostState(selectedHostId = "host-a") {
   return {
@@ -54,7 +54,7 @@ function openSocket(socket) {
 
 function readyConnection(browser, voiceMode = "live_response") {
   const socket = openSocket(browser.socket);
-  socket.receive({ type: "protocol_ready", version: 2 });
+  socket.receive({ type: "protocol_ready", version: 3 });
   socket.receive({ type: "voice_mode", mode: voiceMode });
   socket.receive(hostState());
   return socket;
@@ -88,7 +88,63 @@ function hasUnpairedSurrogate(text) {
   return false;
 }
 
-test("the browser entry loads and sends the exact protocol-v2 hello", async (t) => {
+function voiceProfiles(selectedId = "openai", switchSafe = true) {
+  return {
+    type: "voice_profiles",
+    selected_id: selectedId,
+    switch_safe: switchSafe,
+    profiles: [
+      {
+        id: "openai",
+        label: "OpenAI",
+        provider_type: "openai",
+        model_id: "gpt-realtime",
+        voice_id: "marin",
+        transcription_model_id: "transcribe",
+        processing_location: "cloud",
+        status: "configured",
+        dictation_available: true,
+      },
+      {
+        id: "xai",
+        label: "xAI",
+        provider_type: "xai",
+        model_id: "grok-voice-latest",
+        voice_id: "eve",
+        transcription_model_id: "grok-transcribe",
+        processing_location: "cloud",
+        status: "configured",
+        dictation_available: true,
+      },
+    ],
+  };
+}
+
+function cleanupProfiles(selectedId = "local", switchSafe = true) {
+  return {
+    type: "cleanup_profiles",
+    selected_id: selectedId,
+    switch_safe: switchSafe,
+    profiles: [
+      {
+        id: "local",
+        label: "Local cleanup",
+        model_id: "local-model",
+        processing_location: "local",
+        status: "configured",
+      },
+      {
+        id: "xai-cleanup",
+        label: "xAI cleanup",
+        model_id: "grok-model",
+        processing_location: "cloud",
+        status: "configured",
+      },
+    ],
+  };
+}
+
+test("the browser entry loads and sends the exact protocol-v3 hello", async (t) => {
   const browser = await createAppHarness();
   t.after(() => browser.restore());
 
@@ -101,6 +157,76 @@ test("the browser entry loads and sends the exact protocol-v2 hello", async (t) 
   browser.socket.open();
 
   assert.deepEqual(browser.socket.sentJson(), [hello]);
+});
+
+test("profile selectors use only broker metadata and never persist selections", async (t) => {
+  const browser = await createAppHarness({ storage: { existing: "preference" } });
+  t.after(() => browser.restore());
+  const socket = readyConnection(browser);
+  const voiceSelect = browser.element("voice-profile-select");
+  const cleanupSelect = browser.element("cleanup-profile-select");
+
+  socket.receive(voiceProfiles());
+  socket.receive(cleanupProfiles());
+  assert.equal(voiceSelect.value, "openai");
+  assert.equal(cleanupSelect.value, "local");
+  assert.match(voiceSelect.options[1].textContent, /xAI.*grok-voice-latest.*cloud/);
+  assert.match(cleanupSelect.options[1].textContent, /xAI cleanup.*grok-model.*cloud/);
+
+  voiceSelect.value = "xai";
+  browser.dispatch(voiceSelect, "change");
+  assert.deepEqual(socket.sentJson().at(-1), {
+    type: "select_voice_profile",
+    profile_id: "xai",
+  });
+  socket.receive({
+    type: "voice_profile_selected",
+    profile_id: "xai",
+    provider_generation: 2,
+    requires_latest_reply: true,
+  });
+
+  cleanupSelect.value = "xai-cleanup";
+  browser.dispatch(cleanupSelect, "change");
+  assert.deepEqual(socket.sentJson().at(-1), {
+    type: "select_cleanup_profile",
+    profile_id: "xai-cleanup",
+  });
+  socket.receive({ type: "cleanup_profile_selected", profile_id: "xai-cleanup" });
+  assert.equal(browser.storage.getItem("voiceProfile"), null);
+  assert.equal(browser.storage.getItem("cleanupProfile"), null);
+  assert.equal(
+    browser.storage.entries().some(([key]) => /profile/i.test(key)),
+    false,
+  );
+});
+
+test("voice switching clears stale UI and reconnect renders broker defaults", async (t) => {
+  const browser = await createAppHarness();
+  t.after(() => browser.restore());
+  const socket = readyConnection(browser);
+  socket.receive(voiceProfiles("xai"));
+  socket.receive(cleanupProfiles("xai-cleanup"));
+  socket.receive(dashboardState("summary-a"));
+  socket.receive({ type: "transcript_delta", text: "stale speech" });
+  browser.element("text-input").value = "stale draft";
+
+  socket.receive({ type: "clear_voice_context" });
+  assert.equal(browser.element("transcript").children.length, 0);
+  assert.equal(browser.element("text-input").value, "");
+  assert.equal(browser.element("bound-thread").textContent, "No reply is bound");
+
+  socket.close();
+  browser.clock.tick(3_000);
+  const replacement = browser.socket;
+  openSocket(replacement);
+  replacement.receive({ type: "protocol_ready", version: 3 });
+  replacement.receive({ type: "voice_mode", mode: "live_response" });
+  replacement.receive(hostState());
+  replacement.receive(voiceProfiles("openai"));
+  replacement.receive(cleanupProfiles("local"));
+  assert.equal(browser.element("voice-profile-select").value, "openai");
+  assert.equal(browser.element("cleanup-profile-select").value, "local");
 });
 
 test("protocol and preferred voice-mode ordering keep conversation controls gated", async (t) => {
@@ -118,7 +244,7 @@ test("protocol and preferred voice-mode ordering keep conversation controls gate
   assert.equal(browser.submitButton.disabled, true);
   assert.equal(hostSelect.disabled, true);
 
-  socket.receive({ type: "protocol_ready", version: 2 });
+  socket.receive({ type: "protocol_ready", version: 3 });
   assert.equal(textInput.disabled, true);
   assert.equal(browser.submitButton.disabled, true);
 
@@ -152,7 +278,7 @@ test("generic errors stay connected while protocol mismatch requires reload", as
   assert.equal(browser.element("conn-pill").textContent, "connected");
   assert.equal(browser.element("avatar").dataset.state, "error");
 
-  socket.receive({ type: "protocol_mismatch", required_version: 2 });
+  socket.receive({ type: "protocol_mismatch", required_version: 3 });
   assert.equal(socket.readyState, WebSocket.CLOSING);
   assert.equal(browser.element("conn-pill").textContent, "reload required");
   assert.equal(browser.element("text-input").disabled, true);
@@ -578,7 +704,7 @@ test("a synchronous typed send failure retires ownership without losing the draf
   assert.equal(transcript.children.length, 0);
 
   const reconnectedSocket = openOnlyReplacement(browser, failedSocket);
-  reconnectedSocket.receive({ type: "protocol_ready", version: 2 });
+  reconnectedSocket.receive({ type: "protocol_ready", version: 3 });
   reconnectedSocket.receive({ type: "voice_mode", mode: "live_response" });
   reconnectedSocket.receive(hostState());
   reconnectedSocket.receive({ type: "text_turn_accepted", turn_id: 1 });
@@ -623,7 +749,7 @@ test("an asynchronous close retires an accepted typed send before reconnect", as
   assert.equal(textInput.value, "");
 
   const replacement = openOnlyReplacement(browser, firstSocket);
-  replacement.receive({ type: "protocol_ready", version: 2 });
+  replacement.receive({ type: "protocol_ready", version: 3 });
   replacement.receive({ type: "voice_mode", mode: "live_response" });
   replacement.receive(hostState());
   replacement.receive({ type: "text_turn_accepted", turn_id: 1 });
@@ -664,7 +790,7 @@ test("reconnect while dictation is active clears old ownership before a fresh st
   assert.equal(browser.element("avatar").dataset.state, "disconnected");
 
   const replacement = openOnlyReplacement(browser, firstSocket);
-  replacement.receive({ type: "protocol_ready", version: 2 });
+  replacement.receive({ type: "protocol_ready", version: 3 });
   replacement.receive({ type: "voice_mode", mode: "dictation" });
   replacement.receive(hostState());
   replacement.receive(dashboardState("summary-b"));
@@ -731,7 +857,7 @@ test("disconnect and host selection changes clear ephemeral routing state", asyn
   assert.equal(browser.element("proposal-banner").classList.contains("hidden"), true);
 
   const secondSocket = openOnlyReplacement(browser, firstSocket);
-  secondSocket.receive({ type: "protocol_ready", version: 2 });
+  secondSocket.receive({ type: "protocol_ready", version: 3 });
   secondSocket.receive({ type: "voice_mode", mode: "live_response" });
   secondSocket.receive(hostState("host-b"));
   const hostSelect = browser.element("host-select");
@@ -914,7 +1040,7 @@ test("persisted pagehide fully suspends resources and pageshow reconnects once",
 
   openSocket(resumedSocket);
   assert.equal(textInput.disabled, true);
-  resumedSocket.receive({ type: "protocol_ready", version: 2 });
+  resumedSocket.receive({ type: "protocol_ready", version: 3 });
   assert.equal(textInput.disabled, true);
   resumedSocket.receive({ type: "voice_mode", mode: "live_response" });
   assert.equal(textInput.disabled, true);
@@ -947,7 +1073,7 @@ test("saved-device fallback cannot outlive its BFCache page generation", async (
   await browser.pageshow({ persisted: true });
   const resumedSocket = browser.socket;
   openSocket(resumedSocket);
-  resumedSocket.receive({ type: "protocol_ready", version: 2 });
+  resumedSocket.receive({ type: "protocol_ready", version: 3 });
   resumedSocket.receive({ type: "voice_mode", mode: "live_response" });
   resumedSocket.receive(hostState());
 

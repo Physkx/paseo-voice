@@ -82,18 +82,16 @@ approved.
 
 ### Endpoint and credential isolation
 
-OpenAI, Paseo, and optional model (summariser / dictation cleanup) secrets are resolved once at
-startup from one selected provider: Bitwarden Secrets Manager, 1Password CLI, or the process
-environment. When a manager does not supply the model key, `PASEO_VOICE_SPARK_API_KEY` or
-`XAI_API_KEY` remains a narrow process environment fallback that is not forwarded to secret-manager
-children. Values remain in memory and are excluded from logs.
+Named API credentials and the separate Paseo password are resolved once at startup from Bitwarden
+Secrets Manager, 1Password CLI, or explicitly named process environment variables. Values remain
+in memory, are excluded from logs, and are not forwarded to unrelated secret-manager children.
 
-The OpenAI bearer is sent only to the exact official Realtime endpoint. The model bearer is sent
-only by the shared summarisation and dictation-cleanup HTTP client, including official xAI
-(`https://api.x.ai/v1`) and other OpenAI-compatible HTTPS endpoints. Plain model HTTP remains
-loopback-only unless the operator explicitly opts in to a Tailscale IPv4 endpoint. Other
-non-loopback endpoints require TLS. The model HTTP client disables redirects and ambient proxies so
-content is not forwarded to an unapproved destination.
+Each voice, cleanup, or summarisation route references at most one credential ID. Separate
+no-proxy, no-redirect clients and fixed adapter endpoints prevent a bearer from following a redirect
+or reaching another profile. Official OpenAI and xAI voice profiles are exact-pinned. Processing
+location is derived from the validated host rather than a display label. Plain model HTTP is allowed
+for loopback, or with explicit per-route opt-in for a Tailscale IPv4 or exact allowlisted private
+host. Other non-loopback endpoints require TLS.
 
 ### Trusted host profiles
 
@@ -106,13 +104,26 @@ Model-originated session creation requires separate task collection, proposal, a
 confirmation interactions. Rust supplies host, working directory, and provider/model from the
 selected profile. A validated `agentId` is required before the new session becomes current.
 
+### Grok subscription OAuth for xAI cleanup
 
-### Grok subscription OAuth for model cleanup
+An exact `https://api.x.ai/v1` dictation cleanup profile without a resolved named credential may use
+the provider-owned Grok CLI OAuth store at `~/.grok/auth.json`. That session is the same SuperGrok /
+grok.com login used by the Grok CLI. The token stays in memory, is never logged, and is not eligible
+for xAI voice or fixed reply summarisation.
 
-The summariser and dictation-cleanup model bearer may be taken from the provider-owned Grok CLI
-OAuth store at `~/.grok/auth.json` after `PASEO_VOICE_SPARK_API_KEY` and `XAI_API_KEY`. That session
-is the same SuperGrok / grok.com login used by the Grok CLI. Tokens stay in memory only and are never
-logged. OpenAI Realtime remains a separate credential path.
+### Connection-scoped voice and cleanup routing
+
+The broker owns named OpenAI, xAI, and OpenAI-compatible voice profiles plus named
+OpenAI-compatible cleanup profiles. Exactly one profile in each family is the default. Browser
+selection is connection-scoped and reconnect restores the defaults. No provider failover occurs.
+
+Voice switching is allowed only when runtime and provider work are idle. It closes and retires the
+old provider, advances the provider generation, cancels transient work and any unconfirmed
+proposal, clears summary, playback, transcription, cleanup, and correlation state, preserves the
+selected Paseo host, and requires a new latest-reply read. Cleanup switching is blocked during any
+recording, transcription, or cleanup operation and does not invalidate the active summary or
+proposal. The selected cleanup profile is captured when recording starts. Cleanup failure uses the
+bounded raw transcript with a warning and never routes to another profile.
 
 ### Realtime and dictation isolation
 
@@ -163,7 +174,7 @@ configuration or runtime content.
 - Remote use requires authentication, encrypted transport, and an approved origin policy.
 - Provider catalogues and local model lifecycle management need a focused design before
   implementation.
-- Per-profile credentials and editable new-session defaults remain deferred.
+- Editable new-session provider, model, and directory defaults remain deferred.
 - Any durable user content or correction learning requires an explicit retention and deletion
   policy.
 - Replace alpha status polling with a stable Paseo completion and reply marker.

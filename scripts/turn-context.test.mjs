@@ -14,21 +14,21 @@ import {
   textTurnControl,
 } from "../public/turn-context.js";
 
-test("only dedicated exact protocol v2 frames control negotiation", () => {
-  assert.deepEqual(browserHelloControl(), { type: "hello", protocol_version: 2 });
-  assert.equal(isProtocolReadyFrame({ type: "protocol_ready", version: 2 }), true);
+test("only dedicated exact protocol v3 frames control negotiation", () => {
+  assert.deepEqual(browserHelloControl(), { type: "hello", protocol_version: 3 });
+  assert.equal(isProtocolReadyFrame({ type: "protocol_ready", version: 3 }), true);
   assert.equal(isProtocolReadyFrame({ type: "protocol_ready", version: 1 }), false);
   assert.equal(
-    isProtocolReadyFrame({ type: "protocol_ready", version: 2, unexpected: true }),
+    isProtocolReadyFrame({ type: "protocol_ready", version: 3, unexpected: true }),
     false,
   );
   assert.equal(isProtocolReadyFrame({ type: "mode", mode: "real" }), false);
-  assert.equal(isProtocolMismatchFrame({ type: "protocol_mismatch", required_version: 2 }), true);
+  assert.equal(isProtocolMismatchFrame({ type: "protocol_mismatch", required_version: 3 }), true);
   assert.equal(isProtocolMismatchFrame({ type: "protocol_mismatch", required_version: 1 }), false);
   assert.equal(
     isProtocolMismatchFrame({
       type: "protocol_mismatch",
-      required_version: 2,
+      required_version: 3,
       message: "extra",
     }),
     false,
@@ -48,7 +48,7 @@ test("protocol readiness waits for the initial and matching voice mode acknowled
   const transport = { hostAvailable: true, socketOpen: true };
 
   assert.equal(connection.conversationReady(transport), false);
-  assert.equal(connection.acceptProtocol({ type: "protocol_ready", version: 2 }), true);
+  assert.equal(connection.acceptProtocol({ type: "protocol_ready", version: 3 }), true);
   assert.equal(connection.conversationReady(transport), false);
 
   assert.deepEqual(connection.acceptVoiceMode("live_response"), {
@@ -78,7 +78,7 @@ test("protocol readiness waits for the initial and matching voice mode acknowled
 
 test("a requested voice mode stays gated until its exact acknowledgement", () => {
   const connection = createBrowserConnectionController("live_response");
-  const readyFrame = { type: "protocol_ready", version: 2 };
+  const readyFrame = { type: "protocol_ready", version: 3 };
   connection.acceptProtocol(readyFrame);
   connection.acceptVoiceMode("live_response");
 

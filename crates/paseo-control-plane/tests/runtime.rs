@@ -14,7 +14,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{SinkExt as _, StreamExt as _};
 use paseo_control_plane::{
     clock::SystemClock,
-    config::{Config, PaseoHostProfile},
+    config::{Config, PaseoHostProfile, VoiceProviderType},
     dictation::{CleanupFuture, DictationCleaner, DictationCleanup},
     journal::Journal,
     paseo::{ProcessExecutor, ProcessOutput, SystemProcessExecutor},
@@ -41,6 +41,21 @@ use tokio_tungstenite::{
 
 struct ChildGuard(Child);
 
+fn realtime_config(base_url: &str, model: &str) -> Config {
+    let mut config = Config::default();
+    let profile = &mut config.voice_profiles[0];
+    base_url.clone_into(&mut profile.base_url);
+    model.clone_into(&mut profile.model);
+    if base_url == "wss://api.openai.com/v1/realtime" {
+        profile.provider_type = VoiceProviderType::Openai;
+        profile.credential_ref = Some("openai".to_owned());
+    } else {
+        profile.provider_type = VoiceProviderType::OpenaiCompatible;
+        profile.credential_ref = None;
+    }
+    config
+}
+
 #[test]
 fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
     for (base_url, api_key, force_mock, expected) in [
@@ -55,11 +70,8 @@ fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
         ("wss://realtime.example/v1/realtime", None, false, "real"),
         ("ws://127.0.0.1:8080/realtime", Some("key"), true, "mock"),
     ] {
-        let config = Config {
-            openai_base_url: base_url.to_owned(),
-            force_mock,
-            ..Config::default()
-        };
+        let mut config = realtime_config(base_url, "test-model");
+        config.force_mock = force_mock;
         assert_eq!(realtime_mode(&config, api_key), expected, "{base_url}");
     }
 }
@@ -758,14 +770,15 @@ async fn next_browser_json_of_type(
 async fn initialize_browser_protocol(browser: &mut BrowserSocket, context: &str) {
     browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
         .await
         .unwrap_or_else(|error| panic!("{context} hello: {error}"));
-    for _ in 0..6 {
-        let _ = next_browser_json(browser, context).await;
+    for frame_index in 0..8 {
+        let frame_context = format!("{context} frame {frame_index}");
+        let _ = next_browser_json(browser, &frame_context).await;
     }
 }
 
@@ -846,6 +859,14 @@ async fn start_mock_dictation_browser() -> (tempfile::TempDir, ChildGuard, Brows
             "listenPort":port,
             "forceMock":true,
             "secretProvider":"environment",
+            "voiceProfiles":[
+                {"id":"primary","label":"Primary voice","providerType":"openai-compatible","baseUrl":"ws://127.0.0.1:1234/v1/realtime","model":"primary-model","voice":"marin","transcriptionModel":"local-transcribe","credentialRef":null,"default":true},
+                {"id":"secondary","label":"Secondary voice","providerType":"openai-compatible","baseUrl":"ws://127.0.0.1:1235/v1/realtime","model":"secondary-model","voice":"coral","transcriptionModel":"secondary-transcribe","credentialRef":null,"default":false}
+            ],
+            "cleanupProfiles":[
+                {"id":"local","label":"Local cleanup","baseUrl":"http://127.0.0.1:1234/v1","model":"local-model","credentialRef":null,"default":true,"allowInsecurePrivateHttp":false},
+                {"id":"alternate","label":"Alternate cleanup","baseUrl":"http://127.0.0.1:1235/v1","model":"alternate-model","credentialRef":null,"default":false,"allowInsecurePrivateHttp":false}
+            ],
             "paseoHosts":[
                 {"id":"first","label":"First","target":null,"default":true,"defaultCwd":"~/","defaultProvider":"opencode/model"},
                 {"id":"second","label":"Second","target":"second.example:6767","default":false,"defaultCwd":"~/dev","defaultProvider":"opencode/model"}
@@ -898,6 +919,152 @@ async fn start_mock_dictation_browser() -> (tempfile::TempDir, ChildGuard, Brows
         json!({"type":"voice_mode","mode":"dictation"})
     );
     (directory, guard, browser)
+}
+
+#[tokio::test]
+async fn cleanup_profile_switch_is_connection_scoped_and_rejected_during_recording() {
+    let (_directory, _guard, mut browser) = start_mock_dictation_browser().await;
+    browser
+        .send(Message::Text(
+            json!({"type":"select_cleanup_profile","profile_id":"alternate"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("select alternate cleanup");
+    let selected = next_browser_json_of_type(
+        &mut browser,
+        "cleanup_profile_selected",
+        "alternate cleanup selection",
+    )
+    .await;
+    assert_eq!(selected["profile_id"], "alternate");
+
+    browser
+        .send(Message::Text(
+            json!({"type":"set_voice_mode","mode":"live_response"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("select live recording mode");
+    let _ = next_browser_json_of_type(
+        &mut browser,
+        "voice_mode",
+        "cleanup switch live recording mode",
+    )
+    .await;
+    browser
+        .send(Message::Text(
+            json!({"type":"ptt_start","recording_id":1,"summary_id":null})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("start cleanup-bound recording");
+    let _ = next_browser_json_of_type(&mut browser, "flush_audio", "cleanup-bound recording").await;
+    browser
+        .send(Message::Text(
+            json!({"type":"select_cleanup_profile","profile_id":"local"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("reject cleanup switch during recording");
+    let error = next_browser_json_of_type(&mut browser, "error", "cleanup switch rejection").await;
+    assert_eq!(
+        error["message"],
+        "Cleanup profile cannot be changed during recording, transcription, or cleanup."
+    );
+}
+
+#[tokio::test]
+async fn mock_voice_switch_preserves_host_clears_context_and_rejects_busy_switch() {
+    let (_directory, _guard, mut browser) = start_mock_dictation_browser().await;
+    browser
+        .send(Message::Text(
+            json!({"type":"select_host","host_id":"second"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("select second host");
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch host state").await["type"],
+        "host_state"
+    );
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch host dashboard").await["type"],
+        "dashboard_state"
+    );
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch host proposal").await,
+        json!({"type":"proposal","echo":null})
+    );
+
+    browser
+        .send(Message::Text(
+            json!({"type":"select_voice_profile","profile_id":"secondary"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("select secondary voice");
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch proposal invalidation").await,
+        json!({"type":"proposal","echo":null})
+    );
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch audio flush").await,
+        json!({"type":"flush_audio"})
+    );
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch context clear").await,
+        json!({"type":"clear_voice_context"})
+    );
+    let selected = next_browser_json(&mut browser, "voice switch acknowledgement").await;
+    assert_eq!(selected["type"], "voice_profile_selected");
+    assert_eq!(selected["profile_id"], "secondary");
+    assert_eq!(selected["provider_generation"], 2);
+    assert_eq!(selected["requires_latest_reply"], true);
+    assert_eq!(
+        next_browser_json(&mut browser, "voice switch catalogue").await["type"],
+        "voice_profiles"
+    );
+    let dashboard = next_browser_json(&mut browser, "voice switch dashboard").await;
+    assert_eq!(dashboard["type"], "dashboard_state");
+    assert_eq!(dashboard["selected_host_id"], "second");
+
+    browser
+        .send(Message::Text(
+            json!({"type":"set_voice_mode","mode":"live_response"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("select live response for busy switch");
+    let _ = next_browser_json_of_type(&mut browser, "voice_mode", "busy switch voice mode").await;
+    browser
+        .send(Message::Text(
+            json!({"type":"ptt_start","recording_id":1,"summary_id":null})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("start busy switch recording");
+    let _ = next_browser_json_of_type(&mut browser, "flush_audio", "busy switch recording").await;
+    browser
+        .send(Message::Text(
+            json!({"type":"select_voice_profile","profile_id":"primary"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("attempt busy voice switch");
+    assert_eq!(
+        next_browser_json_of_type(&mut browser, "error", "busy voice switch rejection").await["message"],
+        "Voice profile can only be changed while idle."
+    );
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1244,29 +1411,32 @@ async fn start_injected_realtime_browser_with_hosts_process_and_cleaner(
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let api_key = api_key.map(str::to_owned);
     let paseo_password = paseo_password.map(str::to_owned);
-    let config = Config {
-        listen_host: "127.0.0.1".to_owned(),
-        listen_port: port,
-        openai_base_url: openai_base_url.to_owned(),
-        openai_model: openai_model.to_owned(),
-        public_dir: workspace.join("public"),
-        journal_path: directory.path().join("state/journal.sqlite3"),
-        paseo_hosts,
-        ..Config::default()
-    };
+    let mut config = realtime_config(openai_base_url, openai_model);
+    "127.0.0.1".clone_into(&mut config.listen_host);
+    config.listen_port = port;
+    config.public_dir = workspace.join("public");
+    config.journal_path = directory.path().join("state/journal.sqlite3");
+    config.paseo_hosts = paseo_hosts;
+    let cleanup_id = config.default_cleanup_profile().id.clone();
+    let mut api_credentials = std::collections::HashMap::new();
+    if let Some(api_key) = api_key {
+        api_credentials.insert("openai".to_owned(), api_key);
+    }
+    let mut dictation_cleaners = std::collections::HashMap::new();
+    dictation_cleaners.insert(cleanup_id, Arc::clone(&dictation_cleaner));
     let server = tokio::spawn(async move {
         serve(
             config,
             Secrets {
-                openai_api_key: api_key,
-                spark_api_key: None,
+                api_credentials,
+                grok_oauth_token: None,
                 paseo_password,
             },
             RuntimeDependencies {
                 clock: Arc::new(SystemClock::start()),
                 http_client: reqwest::Client::new(),
                 realtime_connector: connector,
-                dictation_cleaner,
+                dictation_cleaners,
                 process_executor,
             },
             listener,
@@ -1361,7 +1531,7 @@ async fn slow_initial_presentation_does_not_block_browser_or_provider_transport(
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -1369,7 +1539,7 @@ async fn slow_initial_presentation_does_not_block_browser_or_provider_transport(
         .expect("send initial browser hello");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "initial protocol ready").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     tokio::time::timeout(Duration::from_secs(2), started)
         .await
@@ -1380,7 +1550,7 @@ async fn slow_initial_presentation_does_not_block_browser_or_provider_transport(
         .expect("exercise transport during initial presentation");
     let rejected_turn = test_text_turn!("blocked before routing presentation", null);
     let rejected_turn_id = test_text_turn_id(&rejected_turn);
-    for control in [json!({"type":"hello","protocol_version":2}), rejected_turn] {
+    for control in [json!({"type":"hello","protocol_version":3}), rejected_turn] {
         runtime
             .browser
             .send(Message::Text(control.to_string().into()))
@@ -1396,7 +1566,7 @@ async fn slow_initial_presentation_does_not_block_browser_or_provider_transport(
                 "browser transport during initial presentation",
             )
             .await;
-            repeated_hello |= frame == json!({"type":"protocol_ready","version":2});
+            repeated_hello |= frame == json!({"type":"protocol_ready","version":3});
             if frame["type"] == "text_turn_rejected" {
                 assert_eq!(frame["turn_id"], rejected_turn_id);
                 turn_rejected = true;
@@ -1431,7 +1601,7 @@ async fn slow_initial_presentation_does_not_block_browser_or_provider_transport(
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -1547,7 +1717,7 @@ async fn slow_host_selection_preserves_transport_and_publishes_exact_order() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -1581,7 +1751,7 @@ async fn slow_host_selection_preserves_transport_and_publishes_exact_order() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -1855,7 +2025,7 @@ async fn live_commit_ack_before_changed_host_worker_waits_for_transition_ready()
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -2820,7 +2990,17 @@ async fn start_live_realtime_browser_with_protocol(
     let mut config = json!({
         "listenHost":"127.0.0.1",
         "listenPort":app_port,
-        "openaiBaseUrl":format!("ws://127.0.0.1:{realtime_port}"),
+        "voiceProfiles":[{
+            "id":"test-voice",
+            "label":"Test voice",
+            "providerType":"openai-compatible",
+            "baseUrl":format!("ws://127.0.0.1:{realtime_port}"),
+            "model":"gpt-realtime-test",
+            "voice":"marin",
+            "transcriptionModel":"gpt-4o-mini-transcribe",
+            "credentialRef":null,
+            "default":true
+        }],
         "secretProvider":"environment",
         "paseoHosts":[
             {"id":"local","label":"Local","target":null,"default":true,"defaultCwd":"~/","defaultProvider":"opencode/model"},
@@ -2833,7 +3013,21 @@ async fn start_live_realtime_browser_with_protocol(
         config["paseoBin"] = Value::String(paseo_bin.to_string_lossy().into_owned());
     }
     if let Some(model_base_url) = model_base_url {
-        config["sparkBaseUrl"] = Value::String(model_base_url.to_owned());
+        config["cleanupProfiles"] = json!([{
+            "id":"test-cleanup",
+            "label":"Test cleanup",
+            "baseUrl":model_base_url,
+            "model":"test-cleanup-model",
+            "credentialRef":null,
+            "default":true,
+            "allowInsecurePrivateHttp":false
+        }]);
+        config["summarisation"] = json!({
+            "baseUrl":model_base_url,
+            "model":"test-summary-model",
+            "credentialRef":null,
+            "allowInsecurePrivateHttp":false
+        });
     }
     if let Some(summarise_threshold_chars) = summarise_threshold_chars {
         config["summariseThresholdChars"] = Value::from(summarise_threshold_chars);
@@ -2850,7 +3044,6 @@ async fn start_live_realtime_browser_with_protocol(
         .envs(essential_os_env())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", directory.path())
-        .env("OPENAI_API_KEY", "test-key")
         .env("PASEO_VOICE_CONFIG", &config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -4857,7 +5050,7 @@ async fn failed_response_done_suppresses_running_tool_publication() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -5048,7 +5241,7 @@ async fn failed_response_done_invalidates_running_tool_routing_mutation() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -6540,7 +6733,7 @@ async fn proposal_cancellation_while_tools_are_away_is_authoritative() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -6556,7 +6749,7 @@ async fn proposal_cancellation_while_tools_are_away_is_authoritative() {
             runtime
                 .browser
                 .send(Message::Text(
-                    json!({"type":"hello","protocol_version":2})
+                    json!({"type":"hello","protocol_version":3})
                         .to_string()
                         .into(),
                 ))
@@ -14807,7 +15000,10 @@ async fn rust_runtime_bridges_realtime_audio_and_drops_canceled_tool_calls() {
         json!({
             "listenHost":"127.0.0.1",
             "listenPort":app_port,
-            "openaiBaseUrl":format!("ws://127.0.0.1:{realtime_port}"),
+            "voiceProfiles":[{"id":"test-voice","label":"Test voice","providerType":"openai-compatible","baseUrl":format!("ws://127.0.0.1:{realtime_port}"),"model":"gpt-realtime-test","voice":"marin","transcriptionModel":"gpt-4o-mini-transcribe","credentialRef":null,"default":true}],
+            "cleanupProfiles":[{"id":"local-cleanup","label":"Local cleanup","baseUrl":"http://127.0.0.1:1234/v1","model":"local-cleanup","credentialRef":null,"default":true}],
+            "summarisation":{"baseUrl":"http://127.0.0.1:1234/v1","model":"local-summary","credentialRef":null},
+            "apiCredentials":[],
             "secretProvider":"environment",
             "paseoHosts":[
                 {"id":"wsl","label":"Paseo WSL Host","target":"paseo-wsl.example:6767","default":true,"defaultCwd":"~/","defaultProvider":"opencode/gpt-5.6-sol-max"},
@@ -14826,7 +15022,6 @@ async fn rust_runtime_bridges_realtime_audio_and_drops_canceled_tool_calls() {
         .envs(essential_os_env())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", directory.path())
-        .env("OPENAI_API_KEY", "test-key")
         .env("PASEO_VOICE_CONFIG", &config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -14847,7 +15042,7 @@ async fn rust_runtime_bridges_realtime_audio_and_drops_canceled_tool_calls() {
         .expect("browser websocket");
     browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -14855,7 +15050,7 @@ async fn rust_runtime_bridges_realtime_audio_and_drops_canceled_tool_calls() {
         .expect("send browser hello");
     assert_eq!(
         next_browser_json(&mut browser, "protocol ready frame").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     let mode = browser.next().await.expect("mode frame").expect("mode");
     let Message::Text(mode) = mode else {
@@ -14889,15 +15084,26 @@ async fn rust_runtime_bridges_realtime_audio_and_drops_canceled_tool_calls() {
     assert_eq!(capabilities["type"], "dictation_capabilities");
     assert_eq!(
         capabilities["speech_to_text"]["processing_location"],
-        "Broker-configured local endpoint"
+        "local"
     );
-    assert_eq!(
-        capabilities["cleanup"]["processing_location"],
-        "Broker-configured local endpoint"
-    );
+    assert_eq!(capabilities["cleanup"]["processing_location"], "local");
     let encoded_capabilities = capabilities.to_string();
     assert!(!encoded_capabilities.contains("127.0.0.1"));
     assert!(!encoded_capabilities.contains("test-key"));
+    assert_eq!(
+        next_browser_json_of_type(&mut browser, "voice_profiles", "voice profile catalogue").await
+            ["type"],
+        "voice_profiles"
+    );
+    assert_eq!(
+        next_browser_json_of_type(
+            &mut browser,
+            "cleanup_profiles",
+            "cleanup profile catalogue",
+        )
+        .await["type"],
+        "cleanup_profiles"
+    );
     let hosts = tokio::time::timeout(Duration::from_millis(200), browser.next())
         .await
         .expect("host state timeout")
@@ -15201,7 +15407,10 @@ async fn dictation_mode_commits_audio_without_creating_an_assistant_response() {
         json!({
             "listenHost":"localhost",
             "listenPort":app_port,
-            "openaiBaseUrl":format!("ws://localhost:{realtime_port}"),
+            "voiceProfiles":[{"id":"test-voice","label":"Test voice","providerType":"openai-compatible","baseUrl":format!("ws://localhost:{realtime_port}"),"model":"gpt-realtime-test","voice":"marin","transcriptionModel":"gpt-4o-mini-transcribe","credentialRef":null,"default":true}],
+            "cleanupProfiles":[{"id":"local-cleanup","label":"Local cleanup","baseUrl":"http://localhost:1234/v1","model":"local-cleanup","credentialRef":null,"default":true}],
+            "summarisation":{"baseUrl":"http://localhost:1234/v1","model":"local-summary","credentialRef":null},
+            "apiCredentials":[],
             "paseoBin":fake_paseo_path,
             "secretProvider":"environment",
             "paseoHosts":[
@@ -15220,7 +15429,6 @@ async fn dictation_mode_commits_audio_without_creating_an_assistant_response() {
         .envs(essential_os_env())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", directory.path())
-        .env("OPENAI_API_KEY", "test-key")
         .env("PASEO_PASSWORD", "test-password")
         .env("PASEO_VOICE_CONFIG", &config_path)
         .stdin(Stdio::null())
@@ -16371,7 +16579,10 @@ async fn cancelled_dictation_ignores_late_transcription() {
         json!({
             "listenHost":"localhost",
             "listenPort":app_port,
-            "openaiBaseUrl":format!("ws://localhost:{realtime_port}"),
+            "voiceProfiles":[{"id":"test-voice","label":"Test voice","providerType":"openai-compatible","baseUrl":format!("ws://localhost:{realtime_port}"),"model":"gpt-realtime-test","voice":"marin","transcriptionModel":"gpt-4o-mini-transcribe","credentialRef":null,"default":true}],
+            "cleanupProfiles":[{"id":"local-cleanup","label":"Local cleanup","baseUrl":"http://localhost:1234/v1","model":"local-cleanup","credentialRef":null,"default":true}],
+            "summarisation":{"baseUrl":"http://localhost:1234/v1","model":"local-summary","credentialRef":null},
+            "apiCredentials":[],
             "paseoBin":fake_paseo_path,
             "secretProvider":"environment",
             "paseoHosts":[
@@ -16390,7 +16601,6 @@ async fn cancelled_dictation_ignores_late_transcription() {
         .envs(essential_os_env())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", directory.path())
-        .env("OPENAI_API_KEY", "test-key")
         .env("PASEO_PASSWORD", "test-password")
         .env("PASEO_VOICE_CONFIG", &config_path)
         .stdin(Stdio::null())
@@ -16944,8 +17154,10 @@ async fn cancelled_cleanup_emits_one_correlated_terminal_and_ignores_late_result
         json!({
             "listenHost":"localhost",
             "listenPort":app_port,
-            "openaiBaseUrl":format!("ws://localhost:{realtime_port}"),
-            "sparkBaseUrl":format!("http://localhost:{cleanup_port}/v1"),
+            "voiceProfiles":[{"id":"test-voice","label":"Test voice","providerType":"openai-compatible","baseUrl":format!("ws://localhost:{realtime_port}"),"model":"gpt-realtime-test","voice":"marin","transcriptionModel":"gpt-4o-mini-transcribe","credentialRef":null,"default":true}],
+            "cleanupProfiles":[{"id":"local-cleanup","label":"Local cleanup","baseUrl":format!("http://localhost:{cleanup_port}/v1"),"model":"local-cleanup","credentialRef":null,"default":true}],
+            "summarisation":{"baseUrl":"http://localhost:1234/v1","model":"local-summary","credentialRef":null},
+            "apiCredentials":[],
             "paseoBin":fake_paseo_path,
             "secretProvider":"environment",
             "paseoHosts":[
@@ -16964,7 +17176,6 @@ async fn cancelled_cleanup_emits_one_correlated_terminal_and_ignores_late_result
         .envs(essential_os_env())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", directory.path())
-        .env("OPENAI_API_KEY", "test-key")
         .env("PASEO_PASSWORD", "test-password")
         .env("PASEO_VOICE_CONFIG", &config_path)
         .stdin(Stdio::null())
@@ -17524,8 +17735,10 @@ async fn host_change_cancels_recording_and_ignores_the_stale_release() {
         json!({
             "listenHost":"localhost",
             "listenPort":app_port,
-            "openaiBaseUrl":format!("ws://localhost:{realtime_port}"),
-            "sparkBaseUrl":format!("http://localhost:{cleanup_port}/v1"),
+            "voiceProfiles":[{"id":"test-voice","label":"Test voice","providerType":"openai-compatible","baseUrl":format!("ws://localhost:{realtime_port}"),"model":"gpt-realtime-test","voice":"marin","transcriptionModel":"gpt-4o-mini-transcribe","credentialRef":null,"default":true}],
+            "cleanupProfiles":[{"id":"local-cleanup","label":"Local cleanup","baseUrl":format!("http://localhost:{cleanup_port}/v1"),"model":"local-cleanup","credentialRef":null,"default":true}],
+            "summarisation":{"baseUrl":"http://localhost:1234/v1","model":"local-summary","credentialRef":null},
+            "apiCredentials":[],
             "paseoBin":fake_paseo_path,
             "secretProvider":"environment",
             "paseoHosts":[
@@ -17545,7 +17758,6 @@ async fn host_change_cancels_recording_and_ignores_the_stale_release() {
         .envs(essential_os_env())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", directory.path())
-        .env("OPENAI_API_KEY", "test-key")
         .env("PASEO_PASSWORD", "test-password")
         .env("PASEO_VOICE_CONFIG", &config_path)
         .stdin(Stdio::null())
@@ -19741,7 +19953,7 @@ async fn rust_runtime_serves_browser_health_and_mock_websocket() {
         .expect("browser websocket");
     websocket
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -19749,7 +19961,7 @@ async fn rust_runtime_serves_browser_health_and_mock_websocket() {
         .expect("send browser hello");
     assert_eq!(
         next_browser_json(&mut websocket, "protocol ready frame").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     let first = websocket.next().await.expect("mode frame").expect("mode");
     let Message::Text(first) = first else {
@@ -19783,6 +19995,24 @@ async fn rust_runtime_serves_browser_health_and_mock_websocket() {
     assert_eq!(capabilities["type"], "dictation_capabilities");
     assert!(capabilities.get("endpoint").is_none());
     assert!(capabilities.get("credential").is_none());
+    assert_eq!(
+        next_browser_json_of_type(
+            &mut websocket,
+            "voice_profiles",
+            "mock voice profile catalogue",
+        )
+        .await["type"],
+        "voice_profiles"
+    );
+    assert_eq!(
+        next_browser_json_of_type(
+            &mut websocket,
+            "cleanup_profiles",
+            "mock cleanup profile catalogue",
+        )
+        .await["type"],
+        "cleanup_profiles"
+    );
     let hosts = websocket.next().await.expect("host frame").expect("hosts");
     let Message::Text(hosts) = hosts else {
         panic!("expected text host frame");
@@ -19909,7 +20139,7 @@ async fn rust_runtime_serves_browser_health_and_mock_websocket() {
         .expect("reconnect browser websocket");
     reconnected
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -19917,7 +20147,7 @@ async fn rust_runtime_serves_browser_health_and_mock_websocket() {
         .expect("send reconnect browser hello");
     assert_eq!(
         next_browser_json(&mut reconnected, "reconnect protocol ready").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     let _mode = reconnected
         .next()
@@ -19948,6 +20178,18 @@ async fn rust_runtime_serves_browser_health_and_mock_websocket() {
         serde_json::from_str::<Value>(&capabilities).expect("capability JSON")["type"],
         "dictation_capabilities"
     );
+    let _ = next_browser_json_of_type(
+        &mut reconnected,
+        "voice_profiles",
+        "reconnect voice profile catalogue",
+    )
+    .await;
+    let _ = next_browser_json_of_type(
+        &mut reconnected,
+        "cleanup_profiles",
+        "reconnect cleanup profile catalogue",
+    )
+    .await;
     let hosts = reconnected
         .next()
         .await
@@ -22218,7 +22460,7 @@ async fn live_empty_deletion_before_response_done_emits_one_ready() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22252,7 +22494,7 @@ async fn live_empty_deletion_before_response_done_emits_one_ready() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22534,7 +22776,7 @@ async fn live_empty_deletion_ack_before_tool_return_preserves_deferred_host() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22600,7 +22842,7 @@ async fn live_empty_deletion_ack_before_tool_return_preserves_deferred_host() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22776,7 +23018,7 @@ async fn normal_cleanup_deferred_host_publishes_transition_before_one_ready() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22812,7 +23054,7 @@ async fn normal_cleanup_deferred_host_publishes_transition_before_one_ready() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22844,7 +23086,7 @@ async fn normal_cleanup_deferred_host_publishes_transition_before_one_ready() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -22918,7 +23160,7 @@ async fn normal_cleanup_deferred_host_publishes_transition_before_one_ready() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -24436,7 +24678,7 @@ async fn capture_realtime_request(
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -24444,7 +24686,7 @@ async fn capture_realtime_request(
         .expect("send request-capture hello");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "request-capture protocol ready").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     tokio::time::timeout(Duration::from_secs(1), receiver)
         .await
@@ -24455,26 +24697,26 @@ async fn capture_realtime_request(
 #[tokio::test]
 async fn official_openai_realtime_request_gets_exact_bearer_and_safe_model_query() {
     let model = "model/with spaces?variant=one&other=two";
-    for (base_url, expected_path) in [
-        ("wss://api.openai.com/v1/realtime", "/v1/realtime"),
-        ("wss://api.openai.com/v1/realtime/", "/v1/realtime/"),
-    ] {
-        let captured = capture_realtime_request(base_url, Some("official-test-key"), model).await;
+    let captured = capture_realtime_request(
+        "wss://api.openai.com/v1/realtime",
+        Some("official-test-key"),
+        model,
+    )
+    .await;
 
-        assert_eq!(
-            captured.authorization.as_deref(),
-            Some(b"Bearer official-test-key".as_slice())
-        );
-        assert!(captured.authorization_sensitive);
-        let url = reqwest::Url::parse(&captured.uri).expect("captured Realtime URL");
-        assert_eq!(url.scheme(), "wss");
-        assert_eq!(url.host_str(), Some("api.openai.com"));
-        assert_eq!(url.path(), expected_path);
-        assert_eq!(
-            url.query_pairs().collect::<Vec<_>>(),
-            [("model".into(), model.into())]
-        );
-    }
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some(b"Bearer official-test-key".as_slice())
+    );
+    assert!(captured.authorization_sensitive);
+    let url = reqwest::Url::parse(&captured.uri).expect("captured Realtime URL");
+    assert_eq!(url.scheme(), "wss");
+    assert_eq!(url.host_str(), Some("api.openai.com"));
+    assert_eq!(url.path(), "/v1/realtime");
+    assert_eq!(
+        url.query_pairs().collect::<Vec<_>>(),
+        [("model".into(), model.into())]
+    );
 }
 
 #[tokio::test]
@@ -24586,7 +24828,7 @@ async fn binary_browser_hello_is_protocol_mismatch_without_connector() {
         .expect("send binary browser hello");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "binary protocol mismatch").await,
-        json!({"type":"protocol_mismatch","required_version":2})
+        json!({"type":"protocol_mismatch","required_version":3})
     );
     let closed = tokio::time::timeout(Duration::from_secs(1), runtime.browser.next())
         .await
@@ -24605,7 +24847,7 @@ async fn realtime_connector_timeout_is_generic_and_closes_browser() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -24613,7 +24855,7 @@ async fn realtime_connector_timeout_is_generic_and_closes_browser() {
         .expect("send connector-timeout hello");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "connector-timeout protocol ready").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
@@ -24640,7 +24882,7 @@ async fn realtime_connector_timeout_is_generic_and_closes_browser() {
 }
 
 #[tokio::test]
-async fn browser_controls_require_an_exact_v2_hello() {
+async fn browser_controls_require_an_exact_v3_hello() {
     let realtime_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("fake Realtime listener");
@@ -24673,7 +24915,7 @@ async fn browser_controls_require_an_exact_v2_hello() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -24681,11 +24923,11 @@ async fn browser_controls_require_an_exact_v2_hello() {
         .expect("send exact protocol hello");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "protocol ready acknowledgement").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     ready_receiver.await.expect("provider ready signal");
     let mut frame_types = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..7 {
         frame_types.push(
             next_browser_json(&mut runtime.browser, "post-hello browser state").await["type"]
                 .as_str()
@@ -24699,6 +24941,8 @@ async fn browser_controls_require_an_exact_v2_hello() {
             "mode",
             "voice_mode",
             "dictation_capabilities",
+            "voice_profiles",
+            "cleanup_profiles",
             "host_state",
             "dashboard_state"
         ]
@@ -24730,7 +24974,7 @@ async fn incompatible_browser_protocol_closes_the_realtime_session() {
         .expect("send incompatible protocol hello");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "protocol mismatch error").await,
-        json!({"type":"protocol_mismatch","required_version":2})
+        json!({"type":"protocol_mismatch","required_version":3})
     );
     let closed = tokio::time::timeout(Duration::from_secs(1), runtime.browser.next())
         .await
@@ -24760,7 +25004,7 @@ async fn incompatible_browser_protocol_closes_the_mock_session() {
         .expect("send incompatible mock protocol hello");
     assert_eq!(
         next_browser_json(&mut browser, "mock protocol mismatch error").await,
-        json!({"type":"protocol_mismatch","required_version":2})
+        json!({"type":"protocol_mismatch","required_version":3})
     );
     let closed = tokio::time::timeout(Duration::from_secs(1), browser.next())
         .await
@@ -25650,28 +25894,28 @@ async fn panicking_dictation_cleanup_emits_correlated_failure_and_ready() {
         .port();
     let runtime_directory = tempfile::tempdir().expect("injected runtime directory");
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let config = Config {
-        listen_host: "127.0.0.1".to_owned(),
-        listen_port: app_port,
-        openai_base_url: format!("ws://127.0.0.1:{realtime_port}"),
-        paseo_bin: fake_paseo_path.to_string_lossy().into_owned(),
-        public_dir: workspace.join("public"),
-        journal_path: runtime_directory.path().join("state/journal.sqlite3"),
-        ..Config::default()
-    };
+    let mut config = realtime_config(&format!("ws://127.0.0.1:{realtime_port}"), "test-model");
+    config.listen_host = "127.0.0.1".to_owned();
+    config.listen_port = app_port;
+    config.paseo_bin = fake_paseo_path.to_string_lossy().into_owned();
+    config.public_dir = workspace.join("public");
+    config.journal_path = runtime_directory.path().join("state/journal.sqlite3");
+    let cleanup_id = config.default_cleanup_profile().id.clone();
+    let cleaner: Arc<dyn DictationCleaner> = Arc::new(PanickingDictationCleaner);
+    let dictation_cleaners = std::collections::HashMap::from([(cleanup_id, Arc::clone(&cleaner))]);
     let server = tokio::spawn(async move {
         serve(
             config,
             Secrets {
-                openai_api_key: Some("test-key".to_owned()),
-                spark_api_key: None,
+                api_credentials: std::collections::HashMap::new(),
+                grok_oauth_token: None,
                 paseo_password: Some("test-password".to_owned()),
             },
             RuntimeDependencies {
                 clock: std::sync::Arc::new(SystemClock::start()),
                 http_client: reqwest::Client::new(),
                 realtime_connector: std::sync::Arc::new(SystemRealtimeConnector),
-                dictation_cleaner: std::sync::Arc::new(PanickingDictationCleaner),
+                dictation_cleaners,
                 process_executor: std::sync::Arc::new(SystemProcessExecutor),
             },
             app_listener,
@@ -25804,7 +26048,7 @@ async fn generic_provider_error_cannot_impersonate_protocol_mismatch() {
     runtime
         .browser
         .send(Message::Text(
-            json!({"type":"hello","protocol_version":2})
+            json!({"type":"hello","protocol_version":3})
                 .to_string()
                 .into(),
         ))
@@ -25812,7 +26056,7 @@ async fn generic_provider_error_cannot_impersonate_protocol_mismatch() {
         .expect("renegotiate after generic provider error");
     assert_eq!(
         next_browser_json(&mut runtime.browser, "post-error protocol acknowledgement").await,
-        json!({"type":"protocol_ready","version":2})
+        json!({"type":"protocol_ready","version":3})
     );
     finish_sender
         .send(())

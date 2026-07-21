@@ -4,7 +4,7 @@ use std::{collections::HashMap, fs, path::PathBuf, time::Duration};
 
 use serde_json::Value;
 
-use crate::paseo::ProcessExecutor;
+use crate::{config::ApiCredentialConfig, paseo::ProcessExecutor};
 
 /// Supported startup secret providers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,28 +25,22 @@ pub struct SecretConfig {
     pub bws_binary: String,
     /// File containing only the Bitwarden access-token assignment.
     pub bws_env_file: PathBuf,
-    /// `OpenAI` Bitwarden secret ID.
-    pub bws_openai_id: Option<String>,
+    /// Named API credential sources.
+    pub api_credentials: Vec<ApiCredentialConfig>,
     /// Paseo Bitwarden secret ID.
     pub bws_paseo_id: Option<String>,
-    /// Model (summariser / dictation cleanup) Bitwarden secret ID.
-    pub bws_spark_id: Option<String>,
     /// 1Password executable.
     pub onepassword_binary: String,
-    /// `OpenAI` 1Password reference.
-    pub onepassword_openai_ref: Option<String>,
     /// Paseo 1Password reference.
     pub onepassword_paseo_ref: Option<String>,
-    /// Model (summariser / dictation cleanup) 1Password reference.
-    pub onepassword_spark_ref: Option<String>,
 }
 
 /// Secrets retained only in process memory.
 pub struct Secrets {
-    /// Realtime API credential, or none for mock mode.
-    pub openai_api_key: Option<String>,
-    /// Summarisation and dictation-cleanup API credential, or none.
-    pub spark_api_key: Option<String>,
+    /// Broker-only API credentials keyed by configured credential ID.
+    pub api_credentials: HashMap<String, String>,
+    /// Provider-owned Grok OAuth token, restricted to exact xAI cleanup routes.
+    pub grok_oauth_token: Option<String>,
     /// Paseo credential, or none for read/write unavailable mode.
     pub paseo_password: Option<String>,
 }
@@ -61,8 +55,18 @@ pub fn load_secrets<E: ProcessExecutor>(
 ) -> Secrets {
     match config.provider {
         SecretProvider::Environment => Secrets {
-            openai_api_key: nonempty(environment.get("OPENAI_API_KEY")),
-            spark_api_key: environment_model_key(environment),
+            api_credentials: config
+                .api_credentials
+                .iter()
+                .filter_map(|credential| {
+                    let value = credential
+                        .environment_variable
+                        .as_ref()
+                        .and_then(|name| nonempty(environment.get(name)))?;
+                    Some((credential.id.clone(), value))
+                })
+                .collect(),
+            grok_oauth_token: read_grok_subscription_token(environment),
             paseo_password: nonempty(environment.get("PASEO_PASSWORD")),
         },
         SecretProvider::Bitwarden => {
@@ -71,21 +75,23 @@ pub fn load_secrets<E: ProcessExecutor>(
                 .and_then(|text| parse_bws_token(&text));
             let Some(token) = token else {
                 return Secrets {
-                    openai_api_key: None,
-                    spark_api_key: environment_model_key(environment),
+                    api_credentials: HashMap::new(),
+                    grok_oauth_token: read_grok_subscription_token(environment),
                     paseo_password: None,
                 };
             };
             Secrets {
-                openai_api_key: config
-                    .bws_openai_id
-                    .as_deref()
-                    .and_then(|id| read_bws(executor, &config.bws_binary, id, &token, environment)),
-                spark_api_key: config
-                    .bws_spark_id
-                    .as_deref()
-                    .and_then(|id| read_bws(executor, &config.bws_binary, id, &token, environment))
-                    .or_else(|| environment_model_key(environment)),
+                api_credentials: config
+                    .api_credentials
+                    .iter()
+                    .filter_map(|credential| {
+                        let value = credential.bws_secret_id.as_deref().and_then(|id| {
+                            read_bws(executor, &config.bws_binary, id, &token, environment)
+                        })?;
+                        Some((credential.id.clone(), value))
+                    })
+                    .collect(),
+                grok_oauth_token: read_grok_subscription_token(environment),
                 paseo_password: config
                     .bws_paseo_id
                     .as_deref()
@@ -95,19 +101,24 @@ pub fn load_secrets<E: ProcessExecutor>(
         SecretProvider::OnePassword => {
             let op_env = onepassword_environment(environment);
             Secrets {
-                openai_api_key: config
-                    .onepassword_openai_ref
-                    .as_deref()
-                    .and_then(|reference| {
-                        read_onepassword(executor, &config.onepassword_binary, reference, &op_env)
-                    }),
-                spark_api_key: config
-                    .onepassword_spark_ref
-                    .as_deref()
-                    .and_then(|reference| {
-                        read_onepassword(executor, &config.onepassword_binary, reference, &op_env)
+                api_credentials: config
+                    .api_credentials
+                    .iter()
+                    .filter_map(|credential| {
+                        let value = credential.one_password_secret_ref.as_deref().and_then(
+                            |reference| {
+                                read_onepassword(
+                                    executor,
+                                    &config.onepassword_binary,
+                                    reference,
+                                    &op_env,
+                                )
+                            },
+                        )?;
+                        Some((credential.id.clone(), value))
                     })
-                    .or_else(|| environment_model_key(environment)),
+                    .collect(),
+                grok_oauth_token: read_grok_subscription_token(environment),
                 paseo_password: config
                     .onepassword_paseo_ref
                     .as_deref()
@@ -119,52 +130,41 @@ pub fn load_secrets<E: ProcessExecutor>(
     }
 }
 
-fn nonempty(value: Option<&String>) -> Option<String> {
-    value.filter(|value| !value.is_empty()).cloned()
-}
-
-/// Dedicated model key, then `XAI_API_KEY`, then the provider-owned Grok OAuth store.
-fn environment_model_key(environment: &HashMap<String, String>) -> Option<String> {
-    nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY"))
-        .or_else(|| nonempty(environment.get("XAI_API_KEY")))
-        .or_else(|| read_grok_subscription_token(environment))
-}
-
-/// Load the Grok / xAI OIDC access token from the native Grok CLI store.
-///
-/// The store path is `~/.grok/auth.json` (or `$GROK_AUTH_FILE`). This is a provider-owned
-/// OAuth session; values are never logged and are only held in process memory.
+/// Load the broker-side Grok CLI OAuth session without exposing it to child processes.
 fn read_grok_subscription_token(environment: &HashMap<String, String>) -> Option<String> {
     let path = environment.get("GROK_AUTH_FILE").map_or_else(
         || {
-            environment
-                .get("HOME")
-                .map(|home| PathBuf::from(home).join(".grok/auth.json"))
-                .unwrap_or_else(|| PathBuf::from("~/.grok/auth.json"))
+            environment.get("HOME").map_or_else(
+                || PathBuf::from("~/.grok/auth.json"),
+                |home| PathBuf::from(home).join(".grok/auth.json"),
+            )
         },
         PathBuf::from,
     );
     let text = fs::read_to_string(path).ok()?;
     let value: Value = serde_json::from_str(&text).ok()?;
-    let object = value.as_object()?;
-    for entry in object.values() {
-        if let Some(key) = entry
+    value.as_object()?.values().find_map(|entry| {
+        entry
             .get("key")
             .and_then(Value::as_str)
             .filter(|key| !key.is_empty())
-        {
-            return Some(key.to_owned());
-        }
-    }
-    None
+            .map(str::to_owned)
+    })
+}
+
+fn nonempty(value: Option<&String>) -> Option<String> {
+    value.filter(|value| !value.is_empty()).cloned()
 }
 
 fn onepassword_environment(environment: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut environment = environment.clone();
-    // Keep model credentials out of the op child process.
-    environment.remove("PASEO_VOICE_SPARK_API_KEY");
-    environment.remove("XAI_API_KEY");
-    environment
+    let mut child = passthrough_env(environment);
+    child.extend(
+        environment
+            .iter()
+            .filter(|(name, _)| name.starts_with("OP_"))
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    child
 }
 
 /// Parse a Bitwarden token assignment without sourcing a shell file.

@@ -33,6 +33,14 @@ fn essential_os_env() -> Vec<(String, String)> {
         .collect()
 }
 
+fn model_config(endpoint: String) -> Config {
+    let mut config = Config::default();
+    config.summarisation.base_url.clone_from(&endpoint);
+    config.cleanup_profiles[0].base_url = endpoint;
+    config.summarise_threshold_chars = 3;
+    config
+}
+
 async fn config_for_response(status: StatusCode, body: String) -> (Config, Arc<AtomicUsize>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -53,14 +61,7 @@ async fn config_for_response(status: StatusCode, body: String) -> (Config, Arc<A
             .await
             .expect("serve summariser response");
     });
-    (
-        Config {
-            spark_base_url: format!("http://{address}/v1"),
-            summarise_threshold_chars: 3,
-            ..Config::default()
-        },
-        request_count,
-    )
+    (model_config(format!("http://{address}/v1")), request_count)
 }
 
 async fn config_for_chunked_response(chunks: Vec<String>) -> (Config, Arc<AtomicUsize>) {
@@ -94,14 +95,7 @@ async fn config_for_chunked_response(chunks: Vec<String>) -> (Config, Arc<Atomic
             .await
             .expect("serve chunked summariser response");
     });
-    (
-        Config {
-            spark_base_url: format!("http://{address}/v1"),
-            summarise_threshold_chars: 3,
-            ..Config::default()
-        },
-        request_count,
-    )
+    (model_config(format!("http://{address}/v1")), request_count)
 }
 
 async fn config_for_captured_request() -> (Config, Arc<Mutex<Option<serde_json::Value>>>) {
@@ -131,11 +125,7 @@ async fn config_for_captured_request() -> (Config, Arc<Mutex<Option<serde_json::
             .expect("serve capturing summariser response");
     });
     (
-        Config {
-            spark_base_url: format!("http://{address}/v1"),
-            summarise_threshold_chars: 3,
-            ..Config::default()
-        },
+        model_config(format!("http://{address}/v1")),
         captured_request,
     )
 }
@@ -325,11 +315,7 @@ async fn production_client_does_not_redirect_agent_output() {
             .await
             .expect("serve summariser redirect");
     });
-    let config = Config {
-        spark_base_url: format!("http://{redirect_address}/v1"),
-        summarise_threshold_chars: 3,
-        ..Config::default()
-    };
+    let config = model_config(format!("http://{redirect_address}/v1"));
 
     let result = summarise_for_speech(
         &build_model_http_client(None).expect("production HTTP client"),
@@ -362,13 +348,9 @@ async fn model_http_client_proxy_subprocess() {
     }
     let endpoint =
         std::env::var("PASEO_VOICE_PROXY_TEST_ENDPOINT").expect("proxy test model endpoint");
-    let config = Config {
-        spark_base_url: endpoint,
-        summarise_threshold_chars: 3,
-        ..Config::default()
-    };
+    let config = model_config(endpoint);
     let client = build_model_http_client(None).expect("production HTTP client");
-    let cleaner = HttpDictationCleaner::new(client.clone(), &config);
+    let cleaner = HttpDictationCleaner::new(client.clone(), config.default_cleanup_profile());
 
     let cleanup = cleaner
         .clean("ambient proxy transcript")
@@ -598,11 +580,7 @@ async fn unavailable_summariser_returns_a_bounded_cleaned_degraded_fallback() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve failed endpoint");
     let address = listener.local_addr().expect("failed endpoint address");
     drop(listener);
-    let config = Config {
-        spark_base_url: format!("http://{address}/v1"),
-        summarise_threshold_chars: 3,
-        ..Config::default()
-    };
+    let config = model_config(format!("http://{address}/v1"));
     let source = format!("# outcome\n\n- {} final blocker", "detail ".repeat(500));
 
     let result =
@@ -647,11 +625,7 @@ async fn timed_out_summariser_degrades_once_without_retrying() {
             .expect("write timed-out summariser headers");
         std::future::pending::<()>().await;
     });
-    let config = Config {
-        spark_base_url: format!("http://{address}/v1"),
-        summarise_threshold_chars: 3,
-        ..Config::default()
-    };
+    let config = model_config(format!("http://{address}/v1"));
     let source = format!("# outcome\n\n- {}final blocker", "detail ".repeat(500));
     let client = reqwest::Client::builder()
         .read_timeout(std::time::Duration::from_millis(100))

@@ -4,7 +4,8 @@
  *
  * Wire protocol to the broker (/ws):
  * - client -> broker: binary = pcm16 24 kHz mono mic audio (while PTT held);
- *   JSON text = {type: "hello" | "set_voice_mode" | "ptt_start" | "ptt_end" |
+ *   JSON text = {type: "hello" | "set_voice_mode" | "select_voice_profile" |
+ *   "select_cleanup_profile" | "ptt_start" | "ptt_end" |
  *   "ptt_abort" | "cancel_dictation" | "text_turn" | "select_host" |
  *   "confirm_proposal" | "cancel_proposal"}
  *   Every text turn carries the displayed summary_id or null. Every PTT start
@@ -108,6 +109,10 @@ const agentGrid = $("agent-grid");
 const dashboardEmpty = $("dashboard-empty");
 const voiceModeToggle = $("voice-mode-toggle");
 const voiceModeDescription = $("voice-mode-description");
+const voiceProfileSelect = $("voice-profile-select");
+const voiceProfileDetail = $("voice-profile-detail");
+const cleanupProfileSelect = $("cleanup-profile-select");
+const cleanupProfileDetail = $("cleanup-profile-detail");
 const dictationPreview = $("dictation-preview");
 const dictationPreviewText = $("dictation-preview-text");
 const dictationReviewActions = $("dictation-review-actions");
@@ -294,6 +299,15 @@ let dictationOperation = null;
 let pendingDictationTerminal = null;
 let reviewDictationText = null;
 let partialDictationText = "";
+let voiceProfiles = [];
+let cleanupProfiles = [];
+let selectedVoiceProfileId = null;
+let selectedCleanupProfileId = null;
+let voiceProfileSwitchSafe = false;
+let cleanupProfileSwitchSafe = false;
+let voiceProfileSelectionPending = false;
+let cleanupProfileSelectionPending = false;
+let selectedVoiceDictationAvailable = false;
 let recordingMode = storedPreference(recordingModeStorageKey) === "toggle" ? "toggle" : "hold";
 let recordingStartedAt = 0;
 let lastVoiceAt = 0;
@@ -881,8 +895,47 @@ function syncInputState() {
   recordingModeSelect.disabled = microphoneGate.controlsLocked;
   setMicrophoneControlsEnabled(micReady && !microphoneGate.controlsLocked);
   hostSelect.disabled = hostCount < 2 || !conversationAllowed;
+  voiceProfileSelect.disabled =
+    voiceProfiles.length < 2 ||
+    !voiceProfileSwitchSafe ||
+    voiceProfileSelectionPending ||
+    !conversationAllowed;
+  cleanupProfileSelect.disabled =
+    cleanupProfiles.length < 2 ||
+    !cleanupProfileSwitchSafe ||
+    cleanupProfileSelectionPending ||
+    activeRecording !== null ||
+    liveRecordings.pending !== null ||
+    dictationOwnsContext(dictation.phase);
   confirmProposalButton.disabled = proposalState.status !== "pending" || writeInFlight;
   cancelProposalButton.disabled = proposalState.status !== "pending";
+}
+
+function renderProfileSelect(select, detail, profiles, selectedId, kind) {
+  select.replaceChildren();
+  for (const profile of profiles) {
+    if (!profile || typeof profile.id !== "string" || typeof profile.label !== "string") continue;
+    const option = document.createElement("option");
+    option.value = boundText(profile.id, 64);
+    const metadata = [
+      profile.provider_type,
+      profile.model_id,
+      kind === "voice" ? profile.voice_id : null,
+      kind === "voice" ? profile.transcription_model_id : null,
+      profile.processing_location,
+    ]
+      .filter((value) => typeof value === "string" && value.length > 0)
+      .map((value) => boundText(value, 256));
+    const unavailable = profile.status !== "configured";
+    option.textContent = `${boundText(profile.label, 128)}: ${metadata.join(", ")}${unavailable ? " (unavailable)" : ""}`;
+    option.disabled = unavailable && profile.id !== selectedId;
+    option.selected = profile.id === selectedId;
+    select.append(option);
+  }
+  const selected = profiles.find((profile) => profile?.id === selectedId);
+  detail.textContent = selected
+    ? `${boundText(selected.processing_location, 32)}, ${boundText(selected.status, 48)}`
+    : "No broker-selected profile";
 }
 
 function logActivity(text, cls = "") {
@@ -1966,6 +2019,14 @@ function handleGenericError(frame) {
     voiceModeToggle.checked = voiceMode === "live_response";
     syncInputState();
   }
+  if (voiceProfileSelectionPending) {
+    voiceProfileSelectionPending = false;
+    voiceProfileSelect.value = selectedVoiceProfileId ?? "";
+  }
+  if (cleanupProfileSelectionPending) {
+    cleanupProfileSelectionPending = false;
+    cleanupProfileSelect.value = selectedCleanupProfileId ?? "";
+  }
   logActivity(`error: ${message}`, "error");
   playCue("error");
   setInterfaceState("error", message);
@@ -1998,6 +2059,68 @@ function handleServerJson(msg) {
         `${cleanup.processing_location || "unknown location"}, ${cleanup.status || "unknown"}`;
       return;
     }
+    case "voice_profiles":
+      voiceProfiles = Array.isArray(msg.profiles) ? msg.profiles.slice(0, 64) : [];
+      selectedVoiceProfileId = typeof msg.selected_id === "string" ? msg.selected_id : null;
+      voiceProfileSwitchSafe = msg.switch_safe === true;
+      selectedVoiceDictationAvailable =
+        voiceProfiles.find((profile) => profile?.id === selectedVoiceProfileId)
+          ?.dictation_available === true;
+      renderProfileSelect(
+        voiceProfileSelect,
+        voiceProfileDetail,
+        voiceProfiles,
+        selectedVoiceProfileId,
+        "voice",
+      );
+      syncInputState();
+      return;
+    case "cleanup_profiles":
+      cleanupProfiles = Array.isArray(msg.profiles) ? msg.profiles.slice(0, 64) : [];
+      selectedCleanupProfileId = typeof msg.selected_id === "string" ? msg.selected_id : null;
+      cleanupProfileSwitchSafe = msg.switch_safe === true;
+      renderProfileSelect(
+        cleanupProfileSelect,
+        cleanupProfileDetail,
+        cleanupProfiles,
+        selectedCleanupProfileId,
+        "cleanup",
+      );
+      syncInputState();
+      return;
+    case "voice_profile_selected":
+      if (typeof msg.profile_id !== "string") return;
+      selectedVoiceProfileId = msg.profile_id;
+      voiceProfileSelectionPending = false;
+      renderProfileSelect(
+        voiceProfileSelect,
+        voiceProfileDetail,
+        voiceProfiles,
+        selectedVoiceProfileId,
+        "voice",
+      );
+      syncInputState();
+      return;
+    case "cleanup_profile_selected":
+      if (typeof msg.profile_id !== "string") return;
+      selectedCleanupProfileId = msg.profile_id;
+      cleanupProfileSelectionPending = false;
+      renderProfileSelect(
+        cleanupProfileSelect,
+        cleanupProfileDetail,
+        cleanupProfiles,
+        selectedCleanupProfileId,
+        "cleanup",
+      );
+      syncInputState();
+      return;
+    case "clear_voice_context":
+      flushPlayback();
+      transcriptBox.replaceChildren();
+      assistantEntry = null;
+      clearBrowserContext({ sendCancel: false });
+      syncInputState();
+      return;
     case "state": {
       acceptLiveRecordingState(msg);
       const brokerState = msg.state === "responding" ? "thinking" : msg.state;
@@ -2137,7 +2260,7 @@ function handleServerJson(msg) {
       if (typeof msg.text !== "string") return;
       if (!dictation.acceptsOperation(msg.operation_id)) return;
       partialDictationText = boundText(
-        `${partialDictationText}${msg.text}`,
+        msg.replace === true ? msg.text : `${partialDictationText}${msg.text}`,
         MAX_DICTATION_TEXT_CODE_POINTS,
       );
       dictationPreviewText.textContent = partialDictationText || "Transcribing...";
@@ -2310,6 +2433,19 @@ function handleSocketClose(closedSocket = socket, { preserveDraft = false } = {}
   hostAvailable = false;
   hostCount = 0;
   hostSelect.disabled = true;
+  voiceProfiles = [];
+  cleanupProfiles = [];
+  selectedVoiceProfileId = null;
+  selectedCleanupProfileId = null;
+  selectedVoiceDictationAvailable = false;
+  voiceProfileSwitchSafe = false;
+  cleanupProfileSwitchSafe = false;
+  voiceProfileSelectionPending = false;
+  cleanupProfileSelectionPending = false;
+  voiceProfileSelect.replaceChildren();
+  cleanupProfileSelect.replaceChildren();
+  voiceProfileDetail.textContent = "Waiting for broker";
+  cleanupProfileDetail.textContent = "Waiting for broker";
   clearBrowserContext({
     disconnected: true,
     preserveDraft: preserveDraft || draftAwaitingReconnect,
@@ -2339,7 +2475,7 @@ function connect() {
     if (socket !== connection) return;
     setPill(connPill, "connected", "ok");
     if (!sendSocketControl(browserHelloControl())) return;
-    logActivity("connected to broker; negotiating protocol v2");
+    logActivity("connected to broker; negotiating protocol v3");
     restoreMicrophoneInterfaceState();
   });
   listen(connection, "close", () => handleSocketClose(connection));
@@ -2400,6 +2536,11 @@ listen(voiceModeToggle, "change", () => {
     return;
   }
   const requested = voiceModeToggle.checked ? "live_response" : "dictation";
+  if (requested === "dictation" && !selectedVoiceDictationAvailable) {
+    voiceModeToggle.checked = true;
+    logActivity("dictation is unavailable for the selected voice profile", "error");
+    return;
+  }
   const control = browserConnection.requestVoiceMode(requested);
   if (!control) {
     voiceModeToggle.checked = voiceMode === "live_response";
@@ -2489,6 +2630,50 @@ listen(hostSelect, "change", () => {
     });
     sendSocketControl({ type: "select_host", host_id: nextHostId });
   }
+});
+
+listen(voiceProfileSelect, "change", () => {
+  if (
+    !voiceProfileSwitchSafe ||
+    voiceProfileSelectionPending ||
+    socket?.readyState !== WebSocket.OPEN
+  ) {
+    voiceProfileSelect.value = selectedVoiceProfileId ?? "";
+    return;
+  }
+  const profileId = voiceProfileSelect.value;
+  if (
+    !voiceProfiles.some((profile) => profile?.id === profileId && profile.status === "configured")
+  ) {
+    voiceProfileSelect.value = selectedVoiceProfileId ?? "";
+    return;
+  }
+  voiceProfileSelectionPending = true;
+  syncInputState();
+  sendSocketControl({ type: "select_voice_profile", profile_id: profileId });
+});
+
+listen(cleanupProfileSelect, "change", () => {
+  if (
+    !cleanupProfileSwitchSafe ||
+    cleanupProfileSelectionPending ||
+    activeRecording !== null ||
+    dictationOwnsContext(dictation.phase) ||
+    socket?.readyState !== WebSocket.OPEN
+  ) {
+    cleanupProfileSelect.value = selectedCleanupProfileId ?? "";
+    return;
+  }
+  const profileId = cleanupProfileSelect.value;
+  if (
+    !cleanupProfiles.some((profile) => profile?.id === profileId && profile.status === "configured")
+  ) {
+    cleanupProfileSelect.value = selectedCleanupProfileId ?? "";
+    return;
+  }
+  cleanupProfileSelectionPending = true;
+  syncInputState();
+  sendSocketControl({ type: "select_cleanup_profile", profile_id: profileId });
 });
 
 function updateProposalActivation(event) {

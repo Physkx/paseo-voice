@@ -5,7 +5,7 @@
 # Paseo Voice Agent
 
 Paseo Voice is a local push-to-talk and dictation interface for Paseo coding-agent sessions. A
-Rust broker connects a secret-free browser to Paseo and OpenAI Realtime while keeping every write
+Rust broker connects a secret-free browser to Paseo and selectable Realtime providers while keeping every write
 behind an explicit proposal and confirmation gate.
 
 ![The Paseo Voice dashboard in mock mode](docs/assets/dashboard.png)
@@ -19,6 +19,8 @@ The current application provides:
 
 - A browser dashboard with trusted Paseo host profiles, session selection, typed steering, and
   push-to-talk voice interaction.
+- Connection-scoped voice API and dictation cleanup selectors populated only from broker-safe
+  profile metadata. Reconnect always restores the configured defaults.
 - Manual reading and opt-in automatic announcement of the latest agent reply. The reply becomes an
   immutable response context tied to its source session.
 - Provenance-bound response proposals and broker-gated session creation. In the browser, only the
@@ -47,13 +49,13 @@ full live functionality; mock mode can start without them.
 - Node.js 26 or newer and pnpm 11.13.1 for repository tooling
 - Rust 1.97.0 through `rustup`
 - A working `paseo` CLI for session operations
-- An OpenAI API key for the official Realtime endpoint
+- An explicit API key for each configured official OpenAI or xAI Realtime profile
 - An OpenAI-compatible chat-completions endpoint for optional reply summaries and dictation cleanup
 - Bitwarden Secrets Manager CLI, 1Password CLI, or process environment variables for secrets
 
-With the official Realtime endpoint, a missing OpenAI key selects text-only mock mode. A
-credential-free custom endpoint can run live. Set `forceMock` or `PASEO_VOICE_MOCK=true` to disable
-outbound Realtime connections in every case.
+If the default official Realtime profile has no resolved credential, the broker selects text-only
+mock mode. A credential-free local compatible endpoint can run live. Set `forceMock` or
+`PASEO_VOICE_MOCK=true` to disable outbound Realtime connections in every case.
 
 ## Quick start
 
@@ -74,7 +76,9 @@ pnpm console
 
 ## Configuration
 
-Configuration precedence is environment variables, then the JSON file, then built-in defaults.
+Unrelated runtime environment overrides take precedence over the JSON file and built-in defaults.
+Voice, cleanup, summarisation, and API credential definitions are JSON-only so routing remains
+explicit and reviewable.
 The default file is `~/.config/paseo-voice/config.json`; override it with `PASEO_VOICE_CONFIG`.
 Start from [config.example.json](config.example.json).
 
@@ -103,61 +107,54 @@ Paths are passed unchanged for expansion by the selected Paseo daemon. The legac
 Set `autoReplyPollMs` to `1000` for the alpha automatic announcement fallback, or leave it at `0`
 to disable polling. The equivalent environment override is `PASEO_VOICE_AUTO_REPLY_POLL_MS`.
 
+`voiceProfiles` contains named `openai`, `xai`, or `openai-compatible` routes. Exactly one must be
+the default. Official profiles are pinned to `wss://api.openai.com/v1/realtime` or
+`wss://api.x.ai/v1/realtime`; the broker adds the validated model query. xAI transcription uses the
+configured model such as `grok-transcribe`, and cumulative xAI transcription updates replace the
+preview instead of being appended as deltas.
+
+`cleanupProfiles` contains named OpenAI-compatible `POST /chat/completions` routes. Exactly one must
+be the default. Cleanup selection is independent from the fixed `summarisation` route. A cleanup
+failure returns the bounded raw transcript with a degraded warning and never tries another profile.
+See [config.example.json](config.example.json) for official OpenAI and xAI voice, keyless local
+voice, local and private cleanup, xAI OAuth cleanup, fixed summarisation, and reusable credentials.
+
 ### Secrets
 
 Select one provider for the process with `secretProvider` or
 `PASEO_VOICE_SECRET_PROVIDER`: `bitwarden`, `onepassword`, or `environment`. Bitwarden is the
 default.
 
-- `environment` reads `OPENAI_API_KEY`, `PASEO_PASSWORD`, and the model bearer from
-  `PASEO_VOICE_SPARK_API_KEY`, then `XAI_API_KEY`, then the provider-owned Grok OAuth store at
-  `~/.grok/auth.json` (override with `GROK_AUTH_FILE`). That store is the same session used by the
-  Grok CLI after `grok` login on a SuperGrok / grok.com subscription. Start from
-  [.env.example](.env.example) and load other secrets through your shell or secret manager; the
-  application does not load `.env` files.
+- `environment` reads each exact `apiCredentials.environmentVariable` plus `PASEO_PASSWORD`.
+  Ambient OpenAI or xAI aliases are not inferred.
 - `bitwarden` reads a Secrets Manager token from `~/.config/bws.env` and resolves the configured
-  `bwsSecretIdOpenai`, `bwsSecretIdPaseo`, and optional `bwsSecretIdSpark` values.
-- `onepassword` resolves the configured `onePasswordSecretRefOpenai`, `onePasswordSecretRefPaseo`,
-  and optional `onePasswordSecretRefSpark` references through `op read`. 1Password is fully
-  supported for OpenAI Realtime, Paseo, and the model (summarisation / dictation cleanup) key.
+  `apiCredentials[].bwsSecretId` values and the separate Paseo secret ID.
+- `onepassword` resolves each `apiCredentials[].onePasswordSecretRef` and the separate Paseo
+  password reference through `op read`.
 
-When Bitwarden or 1Password does not supply a model key, `PASEO_VOICE_SPARK_API_KEY` or
-`XAI_API_KEY` is still accepted as a narrow environment fallback. Those values are never forwarded
-to secret-manager child processes.
+The provider-owned Grok OAuth store at `~/.grok/auth.json`, optionally overridden with
+`GROK_AUTH_FILE`, remains supported only for an exact `https://api.x.ai/v1` cleanup profile that has
+no resolved named credential. It is never eligible for xAI voice or fixed summarisation. Named API
+credential values and the OAuth token are never forwarded to secret-manager child processes.
 
 Secrets are resolved once at startup. Missing OpenAI credentials affect Realtime only; missing
 Paseo credentials disable Paseo tools without preventing the server from starting. Missing model
 credentials make summarisation and dictation cleanup degrade to safe local fallbacks. Restart after
 secret rotation.
 
-### Model endpoint (summarisation and dictation cleanup)
+### Breaking configuration change
 
-Configure any OpenAI-compatible chat-completions base URL with `sparkBaseUrl` /
-`PASEO_VOICE_SPARK_BASE_URL` and `sparkModel` / `PASEO_VOICE_SPARK_MODEL`.
-
-For an **xAI** subscription or API key:
-
-```json
-{
-  "sparkBaseUrl": "https://api.x.ai/v1",
-  "sparkModel": "grok-4-1-fast-non-reasoning",
-  "secretProvider": "onepassword",
-  "onePasswordSecretRefSpark": "op://Private/xAI/credential"
-}
-```
-
-Or with the environment provider, set `XAI_API_KEY` (or `PASEO_VOICE_SPARK_API_KEY`) and point
-`sparkBaseUrl` at `https://api.x.ai/v1`. The exact official xAI base URL is labeled `xAI cloud` in
-browser capability metadata. Local loopback models remain supported as before.
+The old `openai*`, `spark*`, and associated OpenAI or Spark secret reference fields and environment
+overrides are rejected. They are not translated. Replace them with `voiceProfiles`,
+`cleanupProfiles`, `summarisation`, and `apiCredentials` before starting this version.
 
 ### Endpoint policy
 
-The OpenAI bearer token is sent only to the exact official Realtime endpoint. The separate model
-bearer is sent only through the model HTTP client used for summarisation and dictation cleanup.
-Plain `ws://` is accepted only on loopback. Plain model `http://` is accepted on loopback, or for a
-Tailscale IPv4 address when `allowInsecureTailscaleSpark` or
-`PASEO_VOICE_ALLOW_INSECURE_TAILSCALE_SPARK=true` explicitly opts in. Other remote endpoints
-require `wss://` and `https://`. Model redirects and ambient HTTP proxy discovery are disabled.
+Each bearer is attached only to the exact validated endpoint of the profile that references it.
+Plain `ws://` is accepted only for an OpenAI-compatible loopback voice endpoint. Plain model
+`http://` is accepted on loopback. A Tailscale IPv4 or exact broker allowlisted private host also
+requires that route's `allowInsecurePrivateHttp` opt-in. Other remote endpoints require `wss://`
+and `https://`. Model redirects and ambient HTTP proxy discovery are disabled.
 
 ## Safety model
 
@@ -167,6 +164,10 @@ Rust owns the credentials, immutable reply provenance, proposal state, and only 
 - A response proposal accepts text but no destination. Rust derives the destination from the reply
   context created by the last successful read.
 - Changing host or reply context invalidates the draft and proposal instead of retargeting them.
+- Voice switching is idle-only, retires the old provider, ignores its late events, preserves the
+  selected Paseo host, and clears the response context so the latest reply must be read again.
+- Cleanup switching is blocked during recording, transcription, or cleanup. It does not invalidate
+  the active Paseo summary or proposal.
 - The Realtime model cannot confirm a write. Browser confirmation requires the exact current
   presentation and a later trusted interaction; the local console uses a separate trusted text
   path.
@@ -207,7 +208,7 @@ See [docs/RUST_SAFETY_CONTRACT.md](docs/RUST_SAFETY_CONTRACT.md) for the normati
 - No exactly-once delivery claim until Paseo supports receiver-recognised idempotency
 - No authenticated remote broker transport or configured public web deployment
 - No durable transcript, summary, draft, response, or cancelled-proposal history
-- No per-host credentials or editable new-session provider, model, and directory controls
+- No automatic provider failover or browser persistence of voice and cleanup profile selection
 - No custom cleanup prompts, vocabulary, snippets, correction learning, or desktop companion
 
 ## Contributing

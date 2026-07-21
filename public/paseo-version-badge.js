@@ -3,7 +3,7 @@
   if (document.getElementById(id)) return;
   const badge = document.createElement("aside");
   badge.id = id;
-  badge.textContent = "v0.2.1";
+  badge.textContent = "v0.3.0";
   Object.assign(badge.style, {
     position: "fixed",
     right: "12px",

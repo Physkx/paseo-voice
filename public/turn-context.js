@@ -2,7 +2,7 @@ function opaqueSummaryId(value) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export const BROWSER_PROTOCOL_VERSION = 2;
+export const BROWSER_PROTOCOL_VERSION = 3;
 export const MAX_TURN_ID = 2_147_483_647;
 
 export function browserHelloControl() {

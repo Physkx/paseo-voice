@@ -1,38 +1,127 @@
 {
   "listenHost": "127.0.0.1",
   "listenPort": 8790,
-  "openaiModel": "gpt-realtime-2.1",
-  "openaiVoice": "marin",
-  "openaiBaseUrl": "wss://api.openai.com/v1/realtime",
-  "sparkBaseUrl": "https://api.x.ai/v1",
-  "sparkModel": "grok-4-1-fast-non-reasoning",
-  "allowInsecureTailscaleSpark": false,
+  "voiceProfiles": [
+    {
+      "id": "openai",
+      "label": "OpenAI Realtime",
+      "providerType": "openai",
+      "baseUrl": "wss://api.openai.com/v1/realtime",
+      "model": "gpt-realtime-2.1",
+      "voice": "marin",
+      "transcriptionModel": "gpt-4o-mini-transcribe",
+      "credentialRef": "openai-api",
+      "default": true
+    },
+    {
+      "id": "xai",
+      "label": "xAI Voice",
+      "providerType": "xai",
+      "baseUrl": "wss://api.x.ai/v1/realtime",
+      "model": "grok-voice-latest",
+      "voice": "eve",
+      "transcriptionModel": "grok-transcribe",
+      "credentialRef": "xai-api",
+      "default": false
+    },
+    {
+      "id": "local-compatible",
+      "label": "Local compatible voice",
+      "providerType": "openai-compatible",
+      "baseUrl": "ws://127.0.0.1:9001/v1/realtime",
+      "model": "local-realtime-model",
+      "voice": "default",
+      "transcriptionModel": "local-transcription-model",
+      "credentialRef": null,
+      "default": false
+    }
+  ],
+  "cleanupProfiles": [
+    {
+      "id": "local-cleanup",
+      "label": "Local cleanup",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "model": "local-editing-model",
+      "credentialRef": null,
+      "default": true,
+      "allowInsecurePrivateHttp": false
+    },
+    {
+      "id": "private-cleanup",
+      "label": "Approved private cleanup",
+      "baseUrl": "http://cleanup.private.example:1234/v1",
+      "model": "private-editing-model",
+      "credentialRef": "private-model-api",
+      "default": false,
+      "allowInsecurePrivateHttp": true
+    },
+    {
+      "id": "xai-cleanup",
+      "label": "xAI cleanup with Grok OAuth",
+      "baseUrl": "https://api.x.ai/v1",
+      "model": "grok-4-1-fast-non-reasoning",
+      "credentialRef": null,
+      "default": false,
+      "allowInsecurePrivateHttp": false
+    }
+  ],
+  "summarisation": {
+    "baseUrl": "https://models.example/v1",
+    "model": "fixed-summary-model",
+    "credentialRef": "summary-api",
+    "allowInsecurePrivateHttp": false
+  },
+  "apiCredentials": [
+    {
+      "id": "openai-api",
+      "bwsSecretId": "00000000-0000-0000-0000-000000000001",
+      "onePasswordSecretRef": "op://Private/OpenAI API/credential",
+      "environmentVariable": "PASEO_VOICE_CREDENTIAL_OPENAI"
+    },
+    {
+      "id": "xai-api",
+      "bwsSecretId": "00000000-0000-0000-0000-000000000002",
+      "onePasswordSecretRef": "op://Private/xAI API/credential",
+      "environmentVariable": "PASEO_VOICE_CREDENTIAL_XAI"
+    },
+    {
+      "id": "private-model-api",
+      "bwsSecretId": "00000000-0000-0000-0000-000000000003",
+      "onePasswordSecretRef": "op://Private/Private Model API/credential",
+      "environmentVariable": "PASEO_VOICE_CREDENTIAL_PRIVATE_MODEL"
+    },
+    {
+      "id": "summary-api",
+      "bwsSecretId": "00000000-0000-0000-0000-000000000004",
+      "onePasswordSecretRef": "op://Private/Summary API/credential",
+      "environmentVariable": "PASEO_VOICE_CREDENTIAL_SUMMARY"
+    }
+  ],
+  "approvedPrivateEndpointHosts": ["cleanup.private.example"],
   "summariseThresholdChars": 700,
   "logTailEntries": 40,
   "autoReplyPollMs": 1000,
   "proposalTtlMs": 120000,
   "paseoHosts": [
     {
-      "id": "wsl",
-      "label": "Paseo WSL Host",
-      "target": "paseo-wsl.example:6767",
+      "id": "local",
+      "label": "Local Paseo",
+      "target": null,
       "default": true,
       "defaultCwd": "~/",
-      "defaultProvider": "opencode/gpt-5.6-sol-max"
+      "defaultProvider": "opencode/model"
     },
     {
       "id": "secondary",
-      "label": "Secondary Paseo Host",
+      "label": "Secondary Paseo",
       "target": "paseo-secondary.example:6767",
       "default": false,
       "defaultCwd": "~/dev",
-      "defaultProvider": "codex/gpt-5.4"
+      "defaultProvider": "codex/model"
     }
   ],
   "secretProvider": "onepassword",
-  "onePasswordSecretRefOpenai": "op://Private/OpenAI/credential",
   "onePasswordSecretRefPaseo": "op://Private/Paseo/password",
-  "onePasswordSecretRefSpark": "op://Private/xAI/credential",
   "forceMock": false,
   "logLevel": "info"
 }

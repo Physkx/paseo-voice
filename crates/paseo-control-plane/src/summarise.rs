@@ -67,13 +67,13 @@ pub async fn summarise(
     }
     let endpoint = format!(
         "{}/chat/completions",
-        config.spark_base_url.trim_end_matches('/')
+        config.summarisation.base_url.trim_end_matches('/')
     );
     let mut response = client
         .post(endpoint)
         .timeout(std::time::Duration::from_secs(20))
         .json(&json!({
-            "model": config.spark_model,
+            "model": config.summarisation.model,
             "messages": [
                 {
                     "role": "system",

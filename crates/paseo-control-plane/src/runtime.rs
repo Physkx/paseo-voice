@@ -23,7 +23,7 @@ use tower_http::services::ServeDir;
 use crate::{
     clock::Clock,
     commands::CommandState,
-    config::{Config, EndpointLocation},
+    config::{Config, VoiceProviderType},
     dictation::DictationCleaner,
     journal::Journal,
     paseo::ProcessExecutor,
@@ -35,7 +35,7 @@ use crate::{
 
 const MAX_TERMINAL_DICTATION_IDS: usize = 64;
 
-/// Build the shared HTTP transport for summarisation and dictation cleanup.
+/// Build one isolated HTTP transport for an exact model route credential.
 ///
 /// # Errors
 ///
@@ -59,10 +59,13 @@ pub fn build_model_http_client(api_key: Option<&str>) -> Result<reqwest::Client,
 
 /// Select live Realtime only when the configured endpoint has the credentials it requires.
 #[must_use]
-pub fn realtime_mode(config: &Config, openai_api_key: Option<&str>) -> &'static str {
-    let available = config.realtime_endpoint().is_ok_and(|endpoint| {
-        endpoint.location != EndpointLocation::OpenAiCloud || openai_api_key.is_some()
-    });
+pub fn realtime_mode(config: &Config, voice_credential: Option<&str>) -> &'static str {
+    let profile = config.default_voice_profile();
+    let available = config.voice_endpoint(profile).is_ok()
+        && (!matches!(
+            profile.provider_type,
+            VoiceProviderType::Openai | VoiceProviderType::Xai
+        ) || voice_credential.is_some());
     if !config.force_mock && available {
         "real"
     } else {
@@ -74,13 +77,14 @@ pub fn realtime_mode(config: &Config, openai_api_key: Option<&str>) -> &'static 
 struct AppState {
     mode: &'static str,
     config: Config,
-    openai_api_key: Option<String>,
+    api_credentials: std::collections::HashMap<String, String>,
+    grok_oauth_available: bool,
     paseo_password: Option<String>,
     journal: Arc<Mutex<Journal>>,
     clock: Arc<dyn Clock>,
     http_client: reqwest::Client,
     realtime_connector: Arc<dyn RealtimeConnector>,
-    dictation_cleaner: Arc<dyn DictationCleaner>,
+    dictation_cleaners: std::collections::HashMap<String, Arc<dyn DictationCleaner>>,
     process_executor: Arc<dyn ProcessExecutor>,
     summary_queue: Arc<Mutex<SummaryQueue>>,
 }
@@ -104,8 +108,8 @@ pub struct RuntimeDependencies {
     pub http_client: reqwest::Client,
     /// Outbound `OpenAI` Realtime WebSocket connector.
     pub realtime_connector: Arc<dyn RealtimeConnector>,
-    /// Text-only dictation cleanup service.
-    pub dictation_cleaner: Arc<dyn DictationCleaner>,
+    /// Isolated cleanup adapters keyed by cleanup profile ID.
+    pub dictation_cleaners: std::collections::HashMap<String, Arc<dyn DictationCleaner>>,
     /// Direct process executor used by Paseo adapters.
     pub process_executor: Arc<dyn ProcessExecutor>,
 }
@@ -121,7 +125,12 @@ pub async fn serve(
     dependencies: RuntimeDependencies,
     listener: tokio::net::TcpListener,
 ) -> Result<(), String> {
-    let mode = realtime_mode(&config, secrets.openai_api_key.as_deref());
+    let default_credential = config
+        .default_voice_profile()
+        .credential_ref
+        .as_ref()
+        .and_then(|id| secrets.api_credentials.get(id));
+    let mode = realtime_mode(&config, default_credential.map(String::as_str));
     if let Some(parent) = config.journal_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("journal directory failed: {error}"))?;
@@ -137,16 +146,18 @@ pub async fn serve(
     journal
         .recover(0)
         .map_err(|error| format!("journal recovery failed: {error}"))?;
+    let grok_oauth_available = secrets.grok_oauth_token.is_some();
     let state = Arc::new(AppState {
         mode,
         config: config.clone(),
-        openai_api_key: secrets.openai_api_key,
+        api_credentials: secrets.api_credentials,
+        grok_oauth_available,
         paseo_password: secrets.paseo_password,
         journal: Arc::new(Mutex::new(journal)),
         clock: dependencies.clock,
         http_client: dependencies.http_client,
         realtime_connector: dependencies.realtime_connector,
-        dictation_cleaner: dependencies.dictation_cleaner,
+        dictation_cleaners: dependencies.dictation_cleaners,
         process_executor: dependencies.process_executor,
         summary_queue: Arc::new(Mutex::new(SummaryQueue::new())),
     });
@@ -199,14 +210,15 @@ async fn browser_session(mut socket: WebSocket, state: Arc<AppState>) {
         Box::pin(realtime::run(
             socket,
             state.config.clone(),
-            state.openai_api_key.clone(),
+            state.api_credentials.clone(),
+            state.grok_oauth_available,
             state.paseo_password.clone(),
             realtime::RealtimeDependencies {
                 journal: Arc::clone(&state.journal),
                 clock: Arc::clone(&state.clock),
                 http_client: state.http_client.clone(),
                 connector: Arc::clone(&state.realtime_connector),
-                dictation_cleaner: Arc::clone(&state.dictation_cleaner),
+                dictation_cleaners: state.dictation_cleaners.clone(),
                 process_executor: Arc::clone(&state.process_executor),
                 summary_queue: Arc::clone(&state.summary_queue),
             },
@@ -245,12 +257,41 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
     let mut terminal_dictation_ids = HashSet::<String>::new();
     let mut terminal_dictation_order = VecDeque::<String>::new();
     let mut last_text_turn_id = 0_u64;
+    let mut selected_voice_profile_id = state.config.default_voice_profile().id.clone();
+    let mut selected_cleanup_profile_id = state.config.default_cleanup_profile().id.clone();
+    let mut provider_generation = 1_u64;
     let (mut sender, mut receiver) = socket.split();
     let _ = send_json(&mut sender, json!({"type":"mode","mode":state.mode})).await;
     let _ = send_json(&mut sender, voice_mode.frame()).await;
     let _ = send_json(
         &mut sender,
-        crate::dictation::capability_frame(&state.config, false),
+        crate::dictation::capability_frame(
+            &state.config,
+            &selected_voice_profile_id,
+            &selected_cleanup_profile_id,
+            false,
+        ),
+    )
+    .await;
+    let _ = send_json(
+        &mut sender,
+        crate::provider::voice_profiles_frame(
+            &state.config,
+            &state.api_credentials,
+            &selected_voice_profile_id,
+            true,
+        ),
+    )
+    .await;
+    let _ = send_json(
+        &mut sender,
+        crate::provider::cleanup_profiles_frame(
+            &state.config,
+            &state.api_credentials,
+            state.grok_oauth_available,
+            &selected_cleanup_profile_id,
+            true,
+        ),
     )
     .await;
     let _ = send_json(&mut sender, host_frame(&tools)).await;
@@ -269,23 +310,127 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
                         break;
                     }
                     let _ = send_json(&mut sender, realtime::browser_protocol_ready_frame()).await;
-                    let _ = sender
-                        .send(Message::Text(
-                            json!({ "type": "mode", "mode": state.mode })
-                                .to_string()
-                                .into(),
-                        ))
-                        .await;
+                    let _ = send_json(&mut sender, json!({"type":"mode","mode":state.mode})).await;
                     let _ = send_json(&mut sender, voice_mode.frame()).await;
                     let _ = send_json(
                         &mut sender,
-                        crate::dictation::capability_frame(&state.config, false),
+                        crate::dictation::capability_frame(
+                            &state.config,
+                            &selected_voice_profile_id,
+                            &selected_cleanup_profile_id,
+                            false,
+                        ),
+                    )
+                    .await;
+                    let _ = send_json(
+                        &mut sender,
+                        crate::provider::voice_profiles_frame(
+                            &state.config,
+                            &state.api_credentials,
+                            &selected_voice_profile_id,
+                            true,
+                        ),
+                    )
+                    .await;
+                    let _ = send_json(
+                        &mut sender,
+                        crate::provider::cleanup_profiles_frame(
+                            &state.config,
+                            &state.api_credentials,
+                            state.grok_oauth_available,
+                            &selected_cleanup_profile_id,
+                            active_dictation.is_none() && live_response_recording.is_none(),
+                        ),
                     )
                     .await;
                     let _ = send_json(&mut sender, host_frame(&tools)).await;
                     let _ = send_json(&mut sender, dashboard_frame(&mut tools)).await;
                 } else {
                     match control.get("type").and_then(Value::as_str) {
+                        Some("select_voice_profile") => {
+                            let Some(profile_id) = control
+                                .as_object()
+                                .filter(|object| object.len() == 2)
+                                .and_then(|object| object.get("profile_id"))
+                                .and_then(Value::as_str)
+                            else {
+                                continue;
+                            };
+                            if live_response_recording.is_some() || active_dictation.is_some() {
+                                let _ = send_json(&mut sender, json!({"type":"error","message":"Voice profile can only be changed while idle."})).await;
+                                continue;
+                            }
+                            if !state
+                                .config
+                                .voice_profiles
+                                .iter()
+                                .any(|profile| profile.id == profile_id)
+                            {
+                                continue;
+                            }
+                            if profile_id != selected_voice_profile_id {
+                                let Some(next_generation) = provider_generation.checked_add(1)
+                                else {
+                                    continue;
+                                };
+                                provider_generation = next_generation;
+                                selected_voice_profile_id = profile_id.to_owned();
+                                tools.invalidate_for_voice_switch();
+                                browser_proposal = None;
+                                let _ = send_json(&mut sender, proposal_frame(None)).await;
+                                let _ = send_json(&mut sender, json!({"type":"flush_audio"})).await;
+                                let _ =
+                                    send_json(&mut sender, json!({"type":"clear_voice_context"}))
+                                        .await;
+                            }
+                            let _ = send_json(&mut sender, json!({"type":"voice_profile_selected","profile_id":selected_voice_profile_id,"provider_generation":provider_generation,"requires_latest_reply":true})).await;
+                            let _ = send_json(
+                                &mut sender,
+                                crate::provider::voice_profiles_frame(
+                                    &state.config,
+                                    &state.api_credentials,
+                                    &selected_voice_profile_id,
+                                    true,
+                                ),
+                            )
+                            .await;
+                            let _ = send_json(&mut sender, dashboard_frame(&mut tools)).await;
+                        }
+                        Some("select_cleanup_profile") => {
+                            let Some(profile_id) = control
+                                .as_object()
+                                .filter(|object| object.len() == 2)
+                                .and_then(|object| object.get("profile_id"))
+                                .and_then(Value::as_str)
+                            else {
+                                continue;
+                            };
+                            if live_response_recording.is_some() || active_dictation.is_some() {
+                                let _ = send_json(&mut sender, json!({"type":"error","message":"Cleanup profile cannot be changed during recording, transcription, or cleanup."})).await;
+                                continue;
+                            }
+                            if !state
+                                .config
+                                .cleanup_profiles
+                                .iter()
+                                .any(|profile| profile.id == profile_id)
+                            {
+                                continue;
+                            }
+                            selected_cleanup_profile_id = profile_id.to_owned();
+                            let _ = send_json(&mut sender, json!({"type":"cleanup_profile_selected","profile_id":selected_cleanup_profile_id})).await;
+                            let _ = send_json(
+                                &mut sender,
+                                crate::provider::cleanup_profiles_frame(
+                                    &state.config,
+                                    &state.api_credentials,
+                                    state.grok_oauth_available,
+                                    &selected_cleanup_profile_id,
+                                    true,
+                                ),
+                            )
+                            .await;
+                        }
                         Some("set_voice_mode") => {
                             if live_response_recording.is_some()
                                 && control

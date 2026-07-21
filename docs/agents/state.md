@@ -5,20 +5,20 @@ This file holds current operational facts. Architecture belongs in `DECISIONS.md
 
 ## Runtime
 
-| Item          | Current                                                                                |
-| ------------- | -------------------------------------------------------------------------------------- |
-| Phase         | Early alpha                                                                            |
-| Backend       | One privileged Rust service beside the Paseo CLI                                       |
-| Browser       | Secret-free protocol-v2 dashboard with typed, live voice, and English dictation modes  |
-| Voice         | OpenAI Realtime or a configured custom endpoint; text-only mock mode remains available |
-| Summaries     | Manual reads plus opt-in alpha polling announcements through OpenAI Realtime           |
-| Cleanup model | OpenAI-compatible chat completions; official xAI (`https://api.x.ai/v1`) supported     |
-| Secrets       | Bitwarden, 1Password (OpenAI + Paseo + optional model key), or environment             |
-| Writes        | Provenance-bound proposal plus browser or deterministic console confirmation           |
-| Hosts         | Connection-scoped selector over trusted broker profiles                                |
-| Persistence   | Runtime output is limited to content-free SQLite metadata and browser preferences      |
-| Summary queue | Per connection, with conditional sequential reconnect deduplication in broker memory   |
-| Main gap      | Alpha polling still awaits a stable supported Paseo completion and reply marker        |
+| Item          | Current                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------- |
+| Phase         | Early alpha                                                                             |
+| Backend       | One privileged Rust service beside the Paseo CLI                                        |
+| Browser       | Secret-free protocol-v3 dashboard with connection-scoped voice and cleanup selectors    |
+| Voice         | Named OpenAI, xAI, and compatible profiles; text-only mock mode remains available       |
+| Summaries     | Manual reads plus opt-in alpha polling announcements through the selected voice profile |
+| Cleanup model | Independently selected OpenAI-compatible profiles with raw-transcript fallback          |
+| Secrets       | Named API credentials, exact xAI cleanup OAuth, and separate Paseo authentication       |
+| Writes        | Provenance-bound proposal plus browser or deterministic console confirmation            |
+| Hosts         | Connection-scoped selector over trusted broker profiles                                 |
+| Persistence   | Runtime output is limited to content-free SQLite metadata and browser preferences       |
+| Summary queue | Per connection, with conditional sequential reconnect deduplication in broker memory    |
+| Main gap      | Alpha polling still awaits a stable supported Paseo completion and reply marker         |
 
 The default listener is loopback. Same-origin browser checks exist, but application-level remote
 authentication and TLS termination do not. The broker is not approved for direct public or shared
