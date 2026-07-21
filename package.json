@@ -1,0 +1,33 @@
+{
+  "name": "paseo-voice",
+  "version": "0.1.0",
+  "description": "A push-to-talk voice interface for Paseo coding-agent sessions.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@11.13.1",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "pnpm rust:build",
+    "check": "pnpm format:check && pnpm lint:agents && pnpm lint && pnpm browser:test && pnpm rust:lint && pnpm rust:test && pnpm rust:build",
+    "format": "prettier --write . && pnpm rust:format",
+    "format:check": "prettier --check . && pnpm rust:format:check",
+    "lint": "oxlint --ignore-pattern=public/vendor public scripts",
+    "lint:agents": "node scripts/lint-agents.mjs",
+    "browser:test": "node --test scripts/*.test.mjs",
+    "rust:build": "cargo build --workspace --release",
+    "rust:format": "cargo fmt --all",
+    "rust:format:check": "cargo fmt --all -- --check",
+    "rust:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "rust:test": "cargo test --workspace --all-targets --all-features",
+    "test": "pnpm browser:test && pnpm rust:test",
+    "start": "cargo run --release -p paseo-control-plane -- serve",
+    "console": "cargo run --release -p paseo-control-plane -- console"
+  },
+  "devDependencies": {
+    "oxlint": "^1.74.0",
+    "prettier": "3.9.5"
+  }
+}

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paseo Voice</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%2307100d' stroke='%234ade80' stroke-width='4'/%3E%3Ccircle cx='23' cy='27' r='3' fill='%234ade80'/%3E%3Ccircle cx='41' cy='27' r='3' fill='%234ade80'/%3E%3Cpath d='M23 41h18' stroke='%234ade80' stroke-width='4'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Local agent control plane</p>
+          <h1>Paseo Voice</h1>
+        </div>
+        <div class="pills">
+          <span id="conn-pill" class="pill">connecting</span>
+          <span id="mode-pill" class="pill">mode: ?</span>
+          <span id="state-pill" class="pill">idle</span>
+        </div>
+      </header>
+
+      <section class="hero-grid" aria-label="Voice controls and routing context">
+        <div class="panel avatar-panel">
+          <div
+            id="avatar"
+            class="avatar"
+            data-state="connecting"
+            role="img"
+            aria-label="Paseo Voice is connecting"
+          >
+            <span class="avatar-ring" aria-hidden="true"></span>
+            <span class="avatar-face" aria-hidden="true">
+              <span class="avatar-eye avatar-eye-left"></span>
+              <span class="avatar-eye avatar-eye-right"></span>
+              <span class="avatar-mouth"></span>
+            </span>
+          </div>
+          <div class="avatar-copy">
+            <p id="avatar-state" class="avatar-state" aria-live="polite">Connecting</p>
+            <p id="bound-thread" class="bound-thread">No reply is bound</p>
+            <p class="queue-copy"><span id="queue-count">0</span> summaries waiting</p>
+          </div>
+        </div>
+
+        <div class="control-stack">
+          <section id="setup" class="setup-card">
+            <button id="enable-mic" class="primary">Enable microphone</button>
+            <p class="hint">
+              Required once per page load. Audio stays between this browser and the local broker.
+            </p>
+          </section>
+
+          <section class="voice-mode-control" aria-labelledby="voice-mode-label">
+            <label class="toggle-row" for="voice-mode-toggle">
+              <span>
+                <strong id="voice-mode-label">Live Response</strong>
+                <small id="voice-mode-description">
+                  Paseo Voice responds aloud and may use agent tools.
+                </small>
+              </span>
+              <input id="voice-mode-toggle" type="checkbox" role="switch" checked disabled />
+            </label>
+          </section>
+
+          <button id="ptt" class="ptt" disabled aria-describedby="ptt-hint">
+            <span id="ptt-label">Hold to talk</span>
+            <span id="ptt-hint">Or hold the space bar</span>
+          </button>
+
+          <section class="recording-controls" aria-label="Dictation recording controls">
+            <label>
+              Recording interaction
+              <select id="recording-mode">
+                <option value="hold">Hold to record</option>
+                <option value="toggle">Tap to start and stop</option>
+              </select>
+            </label>
+            <label class="inline-option">
+              <input id="silence-stop" type="checkbox" checked />
+              Auto-stop toggle recording after
+              <select id="silence-period" aria-label="Silence period">
+                <option value="1000">1.0 seconds</option>
+                <option value="1600" selected>1.6 seconds</option>
+                <option value="2500">2.5 seconds</option>
+                <option value="4000">4.0 seconds</option>
+              </select>
+              of silence
+            </label>
+            <button id="cancel-dictation" type="button" class="hidden">Cancel dictation</button>
+          </section>
+
+          <details id="dictation-settings" class="dictation-settings hidden">
+            <summary>Microphone and shortcut settings</summary>
+            <div class="settings-grid">
+              <label>
+                Microphone
+                <select id="microphone-select"></select>
+              </label>
+              <p id="microphone-status" class="hint" aria-live="polite"></p>
+              <fieldset>
+                <legend>Browser audio processing</legend>
+                <label
+                  ><input id="echo-cancellation" type="checkbox" checked /> Echo cancellation</label
+                >
+                <label
+                  ><input id="noise-suppression" type="checkbox" checked /> Noise suppression</label
+                >
+                <label
+                  ><input id="auto-gain" type="checkbox" checked /> Automatic gain control</label
+                >
+                <label><input id="pre-roll" type="checkbox" checked /> Short pre-roll buffer</label>
+                <label><input id="sound-cues" type="checkbox" checked /> Sound cues</label>
+              </fieldset>
+              <fieldset>
+                <legend>Page shortcuts</legend>
+                <label
+                  >Hold
+                  <select id="hold-shortcut"></select
+                ></label>
+                <label
+                  >Toggle
+                  <select id="toggle-shortcut"></select
+                ></label>
+                <label
+                  >Cancel
+                  <select id="cancel-shortcut"></select
+                ></label>
+                <p id="shortcut-status" class="hint" aria-live="polite"></p>
+              </fieldset>
+            </div>
+          </details>
+
+          <section
+            id="dictation-providers"
+            class="dictation-providers"
+            aria-label="Dictation providers"
+          >
+            <div>
+              <span>Speech-to-text</span>
+              <strong id="stt-provider">Waiting for broker</strong>
+              <small id="stt-provider-status"></small>
+            </div>
+            <div>
+              <span>Cleanup</span>
+              <strong id="cleanup-provider">Waiting for broker</strong>
+              <small id="cleanup-provider-status"></small>
+            </div>
+          </section>
+
+          <section id="text-turn-box" class="text-turn-box" aria-label="Typed steering">
+            <form id="text-form">
+              <label for="text-input">Typed response or command</label>
+              <div class="input-row">
+                <textarea
+                  id="text-input"
+                  rows="4"
+                  placeholder="Reply, steer, or ask for status"
+                  autocomplete="off"
+                  disabled
+                ></textarea>
+                <button type="submit" disabled>Send</button>
+              </div>
+              <p id="response-destination" class="response-destination">
+                Destination: no bound reply
+              </p>
+            </form>
+          </section>
+
+          <section id="dictation-preview" class="dictation-preview hidden" aria-live="polite">
+            <p class="eyebrow">Dictation</p>
+            <p id="dictation-preview-text"></p>
+            <div id="dictation-review-actions" class="dictation-review-actions hidden">
+              <button id="insert-dictation" type="button">Insert at current caret</button>
+              <button id="discard-dictation" type="button">Discard</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="proposal-banner" class="proposal-banner hidden" aria-live="assertive">
+        <div>
+          <p class="eyebrow">Awaiting explicit approval</p>
+          <strong id="proposal-text"></strong>
+        </div>
+        <div class="proposal-actions">
+          <button id="confirm-proposal" type="button">Confirm send</button>
+          <button id="cancel-proposal" type="button">Cancel</button>
+        </div>
+      </section>
+
+      <section class="panel host-context" aria-labelledby="host-heading">
+        <div>
+          <h2 id="host-heading">Paseo host</h2>
+          <select id="host-select" disabled aria-label="Active Paseo host"></select>
+        </div>
+        <dl class="host-defaults">
+          <div>
+            <dt>Directory</dt>
+            <dd id="host-cwd">?</dd>
+          </div>
+          <div>
+            <dt>Harness/model</dt>
+            <dd id="host-provider">?</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="dashboard-section" aria-labelledby="agents-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Selected host</p>
+            <h2 id="agents-heading">Agent dashboard</h2>
+          </div>
+          <span id="agent-count" class="count-badge">0 agents</span>
+        </div>
+        <div id="agent-grid" class="agent-grid"></div>
+        <p id="dashboard-empty" class="empty-state">Waiting for agent state from the broker.</p>
+      </section>
+
+      <div class="detail-grid">
+        <section class="panel">
+          <h2>Conversation</h2>
+          <div id="transcript" class="scroll" aria-live="polite"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Activity</h2>
+          <div id="activity" class="scroll small" aria-live="polite"></div>
+        </section>
+      </div>
+    </main>
+    <script src="app.js" type="module"></script>
+  </body>
+</html>

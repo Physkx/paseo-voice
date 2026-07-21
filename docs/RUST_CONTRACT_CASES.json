@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "provenance-cross-thread",
+      "phase": 2,
+      "behavior": "A response proposed from summary A cannot target the source thread of summary B"
+    },
+    {
+      "id": "confirmation-later-interaction",
+      "phase": 2,
+      "behavior": "Confirmation from the proposal interaction or an earlier interaction is rejected"
+    },
+    {
+      "id": "confirmation-concurrent-replay",
+      "phase": 2,
+      "behavior": "Concurrent confirmation replay produces at most one dispatch transition"
+    },
+    {
+      "id": "response-exact-bytes",
+      "phase": 2,
+      "behavior": "Leading and trailing whitespace, Unicode, and line endings are preserved exactly"
+    },
+    {
+      "id": "response-invalid-input",
+      "phase": 2,
+      "behavior": "Empty, whitespace-only, NUL-containing, and oversized response bodies are rejected"
+    },
+    {
+      "id": "queue-deduplicate-and-order",
+      "phase": 2,
+      "behavior": "Duplicate completion events are ignored and unique contexts retain deterministic order"
+    },
+    {
+      "id": "request-id-replay",
+      "phase": 3,
+      "behavior": "Identical request replay returns the original result and conflicting replay is rejected"
+    },
+    {
+      "id": "protocol-malformed-frame",
+      "phase": 3,
+      "behavior": "Malformed, truncated, oversized, unknown-version, and trailing input fails closed"
+    },
+    {
+      "id": "realtime-duplicate-call-id",
+      "phase": 4,
+      "behavior": "A duplicate realtime function call ID cannot repeat a state transition or write"
+    },
+    {
+      "id": "delivery-ambiguous-outcome",
+      "phase": 6,
+      "behavior": "Loss of authoritative acknowledgement after dispatch produces outcome_unknown"
+    },
+    {
+      "id": "recovery-no-fresh-send",
+      "phase": 7,
+      "behavior": "Restart recovery cannot convert pending or unknown metadata into a fresh write"
+    },
+    {
+      "id": "typescript-backend-removed",
+      "phase": 8,
+      "behavior": "Production start, console, broker, realtime, tools, secrets, and Paseo behavior execute from Rust"
+    }
+  ]
+}
