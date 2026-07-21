@@ -123,10 +123,40 @@ fn nonempty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
 }
 
-/// Dedicated model key first, then `XAI_API_KEY` for xAI subscription credentials.
+/// Dedicated model key, then `XAI_API_KEY`, then the provider-owned Grok OAuth store.
 fn environment_model_key(environment: &HashMap<String, String>) -> Option<String> {
     nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY"))
         .or_else(|| nonempty(environment.get("XAI_API_KEY")))
+        .or_else(|| read_grok_subscription_token(environment))
+}
+
+/// Load the Grok / xAI OIDC access token from the native Grok CLI store.
+///
+/// The store path is `~/.grok/auth.json` (or `$GROK_AUTH_FILE`). This is a provider-owned
+/// OAuth session; values are never logged and are only held in process memory.
+fn read_grok_subscription_token(environment: &HashMap<String, String>) -> Option<String> {
+    let path = environment.get("GROK_AUTH_FILE").map_or_else(
+        || {
+            environment
+                .get("HOME")
+                .map(|home| PathBuf::from(home).join(".grok/auth.json"))
+                .unwrap_or_else(|| PathBuf::from("~/.grok/auth.json"))
+        },
+        PathBuf::from,
+    );
+    let text = fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let object = value.as_object()?;
+    for entry in object.values() {
+        if let Some(key) = entry
+            .get("key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty())
+        {
+            return Some(key.to_owned());
+        }
+    }
+    None
 }
 
 fn onepassword_environment(environment: &HashMap<String, String>) -> HashMap<String, String> {

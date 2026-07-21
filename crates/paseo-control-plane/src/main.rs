@@ -60,6 +60,13 @@ async fn main() -> ExitCode {
                             "available"
                         } else {
                             "unavailable"
+                        },
+                        "model_base": config.spark_base_url,
+                        "model_id": config.spark_model,
+                        "model_credentials": if secrets.spark_api_key.is_some() {
+                            "available"
+                        } else {
+                            "unavailable"
                         }
                     })
                 );

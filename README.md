@@ -110,9 +110,11 @@ Select one provider for the process with `secretProvider` or
 default.
 
 - `environment` reads `OPENAI_API_KEY`, `PASEO_PASSWORD`, and the model bearer from
-  `PASEO_VOICE_SPARK_API_KEY` or `XAI_API_KEY` (dedicated spark key wins). Start from
-  [.env.example](.env.example) and load it through your shell or secret manager; the application
-  does not load `.env` files.
+  `PASEO_VOICE_SPARK_API_KEY`, then `XAI_API_KEY`, then the provider-owned Grok OAuth store at
+  `~/.grok/auth.json` (override with `GROK_AUTH_FILE`). That store is the same session used by the
+  Grok CLI after `grok` login on a SuperGrok / grok.com subscription. Start from
+  [.env.example](.env.example) and load other secrets through your shell or secret manager; the
+  application does not load `.env` files.
 - `bitwarden` reads a Secrets Manager token from `~/.config/bws.env` and resolves the configured
   `bwsSecretIdOpenai`, `bwsSecretIdPaseo`, and optional `bwsSecretIdSpark` values.
 - `onepassword` resolves the configured `onePasswordSecretRefOpenai`, `onePasswordSecretRefPaseo`,

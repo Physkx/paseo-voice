@@ -1,5 +1,5 @@
 lifecycle: development
-version: 0.2.0
+version: 0.2.1
 default_deploy_target: development
 production_locked: false
 cost:

@@ -577,6 +577,40 @@ fn environment_provider_accepts_xai_api_key_alias_for_model_endpoint() {
 }
 
 #[test]
+fn environment_provider_reads_grok_subscription_auth_store() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let auth_path = directory.path().join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{"https://auth.x.ai::client":{"key":"oidc-access-token","auth_mode":"oidc"}}"#,
+    )
+    .expect("write grok auth store");
+    let executor = FakeExecutor {
+        outputs: Mutex::default(),
+        calls: Mutex::default(),
+    };
+    let config = SecretConfig {
+        provider: SecretProvider::Environment,
+        bws_binary: "bws".to_owned(),
+        bws_env_file: "unused".into(),
+        bws_openai_id: None,
+        bws_paseo_id: None,
+        bws_spark_id: None,
+        onepassword_binary: "op".to_owned(),
+        onepassword_openai_ref: None,
+        onepassword_paseo_ref: None,
+        onepassword_spark_ref: None,
+    };
+    let environment = HashMap::from([(
+        "GROK_AUTH_FILE".to_owned(),
+        auth_path.to_string_lossy().into_owned(),
+    )]);
+    let secrets = load_secrets(&config, &executor, &environment);
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("oidc-access-token"));
+    assert!(executor.calls.lock().expect("calls lock").is_empty());
+}
+
+#[test]
 fn official_xai_summariser_endpoint_is_accepted() {
     for value in ["https://api.x.ai/v1", "https://api.x.ai/v1/"] {
         let environment = HashMap::from([
