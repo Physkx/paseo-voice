@@ -1,6 +1,6 @@
 {
   "name": "paseo-voice",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A push-to-talk voice interface for Paseo coding-agent sessions.",
   "private": true,
   "license": "MIT",

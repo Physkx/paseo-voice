@@ -1,5 +1,29 @@
 # AGENTS.md - paseo-voice router
 
+Canonical workspace: `/home/bays/dev/repos/paseo-voice` only.
+
+```sh
+cd ~/dev/repos/paseo-voice
+paseo-workflow health --repair
+paseo-workflow project receipt
+```
+
+Never use `/mnt/c/.../orca/projects/...` or other Windows/Orca copies. Follow the global
+`paseo-autonomous-workflow` skill. One writer, direct `main`, full-access providers from the
+routing manifest, scoped 1Password references, project validation, automatic commit/push, Obsidian
+writeback, and Qdrant re-indexing.
+
+Before validation for every successful project-changing task:
+
+```sh
+paseo-workflow project version --bump auto --summary "<concise change>" --area "<area>" --web-badge required
+```
+
+Development stays on `0.x.x`. This product is a local broker (not a public web app); there is no
+cloud deploy target. Completion is validate, commit, push, and knowledge writeback. Collaboration
+with Physkx may use pull requests when explicitly coordinating review; default agent posture remains
+direct `main` after `pnpm check`.
+
 Slim entry point for coding agents. Read only the documents the task router points to.
 
 ## STOP - do not unless explicitly asked

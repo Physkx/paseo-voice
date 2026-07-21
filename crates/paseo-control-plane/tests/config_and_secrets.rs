@@ -518,9 +518,11 @@ fn environment_secret_provider_preserves_exact_values_and_empty_is_missing() {
         bws_env_file: "unused".into(),
         bws_openai_id: None,
         bws_paseo_id: None,
+        bws_spark_id: None,
         onepassword_binary: "op".to_owned(),
         onepassword_openai_ref: None,
         onepassword_paseo_ref: None,
+        onepassword_spark_ref: None,
     };
     let environment = HashMap::from([
         ("OPENAI_API_KEY".to_owned(), "  exact-key\n".to_owned()),
@@ -535,6 +537,61 @@ fn environment_secret_provider_preserves_exact_values_and_empty_is_missing() {
     assert_eq!(secrets.spark_api_key.as_deref(), Some("test-model-key"));
     assert!(secrets.paseo_password.is_none());
     assert!(executor.calls.lock().expect("calls lock").is_empty());
+}
+
+#[test]
+fn environment_provider_accepts_xai_api_key_alias_for_model_endpoint() {
+    let executor = FakeExecutor {
+        outputs: Mutex::default(),
+        calls: Mutex::default(),
+    };
+    let config = SecretConfig {
+        provider: SecretProvider::Environment,
+        bws_binary: "bws".to_owned(),
+        bws_env_file: "unused".into(),
+        bws_openai_id: None,
+        bws_paseo_id: None,
+        bws_spark_id: None,
+        onepassword_binary: "op".to_owned(),
+        onepassword_openai_ref: None,
+        onepassword_paseo_ref: None,
+        onepassword_spark_ref: None,
+    };
+    let environment = HashMap::from([("XAI_API_KEY".to_owned(), "xai-sub-key".to_owned())]);
+    let secrets = load_secrets(&config, &executor, &environment);
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("xai-sub-key"));
+
+    let environment = HashMap::from([
+        (
+            "PASEO_VOICE_SPARK_API_KEY".to_owned(),
+            "dedicated-model-key".to_owned(),
+        ),
+        ("XAI_API_KEY".to_owned(), "xai-sub-key".to_owned()),
+    ]);
+    let secrets = load_secrets(&config, &executor, &environment);
+    assert_eq!(
+        secrets.spark_api_key.as_deref(),
+        Some("dedicated-model-key"),
+        "dedicated spark key wins over XAI_API_KEY"
+    );
+}
+
+#[test]
+fn official_xai_summariser_endpoint_is_accepted() {
+    for value in ["https://api.x.ai/v1", "https://api.x.ai/v1/"] {
+        let environment = HashMap::from([
+            ("PASEO_VOICE_SPARK_BASE_URL".to_owned(), value.to_owned()),
+            (
+                "PASEO_VOICE_SPARK_MODEL".to_owned(),
+                "grok-4-1-fast-non-reasoning".to_owned(),
+            ),
+        ]);
+        let loaded = config::load(&environment).unwrap_or_else(|error| {
+            panic!("xAI endpoint {value} should load: {error}");
+        });
+        assert_eq!(loaded.spark_base_url, value);
+        assert_eq!(loaded.spark_model, "grok-4-1-fast-non-reasoning");
+    }
 }
 
 #[test]
@@ -559,9 +616,11 @@ fn bitwarden_passes_essential_os_variables_and_token_to_the_bws_child() {
         bws_env_file: token_file,
         bws_openai_id: Some("openai-secret-id".to_owned()),
         bws_paseo_id: Some("paseo-secret-id".to_owned()),
+        bws_spark_id: None,
         onepassword_binary: "op".to_owned(),
         onepassword_openai_ref: None,
         onepassword_paseo_ref: None,
+        onepassword_spark_ref: None,
     };
     let environment = HashMap::from([
         ("SystemRoot".to_owned(), r"C:\Windows".to_owned()),
@@ -602,9 +661,11 @@ fn bitwarden_provider_accepts_environment_fallback_for_local_model_key() {
         bws_env_file: "missing-token-file".into(),
         bws_openai_id: None,
         bws_paseo_id: None,
+        bws_spark_id: None,
         onepassword_binary: "op".to_owned(),
         onepassword_openai_ref: None,
         onepassword_paseo_ref: None,
+        onepassword_spark_ref: None,
     };
     let environment = HashMap::from([(
         "PASEO_VOICE_SPARK_API_KEY".to_owned(),
@@ -621,6 +682,7 @@ fn onepassword_reads_sequentially_and_never_logs_or_transforms_values() {
     let executor = FakeExecutor {
         outputs: Mutex::new(VecDeque::from([
             success(r#""  openai\n""#),
+            success(r#""  xai-model\n""#),
             success(r#""  paseo\t""#),
         ])),
         calls: Mutex::default(),
@@ -631,9 +693,11 @@ fn onepassword_reads_sequentially_and_never_logs_or_transforms_values() {
         bws_env_file: "unused".into(),
         bws_openai_id: None,
         bws_paseo_id: None,
+        bws_spark_id: None,
         onepassword_binary: "custom-op".to_owned(),
         onepassword_openai_ref: Some("op://vault/openai/key".to_owned()),
         onepassword_paseo_ref: Some("op://vault/paseo/password".to_owned()),
+        onepassword_spark_ref: Some("op://vault/xai/credential".to_owned()),
     };
     let environment = HashMap::from([
         ("PATH".to_owned(), "/bin".to_owned()),
@@ -641,23 +705,59 @@ fn onepassword_reads_sequentially_and_never_logs_or_transforms_values() {
             "PASEO_VOICE_SPARK_API_KEY".to_owned(),
             "unused-fallback".to_owned(),
         ),
+        ("XAI_API_KEY".to_owned(), "also-unused".to_owned()),
     ]);
     let secrets = load_secrets(&config, &executor, &environment);
     assert_eq!(secrets.openai_api_key.as_deref(), Some("  openai\n"));
-    assert_eq!(secrets.spark_api_key.as_deref(), Some("unused-fallback"));
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("  xai-model\n"));
     assert_eq!(secrets.paseo_password.as_deref(), Some("  paseo\t"));
     let calls = executor.calls.lock().expect("calls lock");
-    assert_eq!(calls.len(), 2);
-    assert!(
-        calls
-            .iter()
-            .all(|call| !call.2.contains_key("PASEO_VOICE_SPARK_API_KEY"))
-    );
+    assert_eq!(calls.len(), 3);
+    assert!(calls.iter().all(|call| {
+        !call.2.contains_key("PASEO_VOICE_SPARK_API_KEY") && !call.2.contains_key("XAI_API_KEY")
+    }));
     assert_eq!(
         calls[0].1,
         ["read", "--format", "json", "op://vault/openai/key"]
     );
+    assert_eq!(
+        calls[1].1,
+        ["read", "--format", "json", "op://vault/xai/credential"]
+    );
+    assert_eq!(
+        calls[2].1,
+        ["read", "--format", "json", "op://vault/paseo/password"]
+    );
     assert_eq!(calls[0].3, Duration::from_secs(20));
+}
+
+#[test]
+fn onepassword_falls_back_to_environment_model_key_when_spark_ref_missing() {
+    let executor = FakeExecutor {
+        outputs: Mutex::new(VecDeque::from([
+            success(r#""openai""#),
+            success(r#""paseo""#),
+        ])),
+        calls: Mutex::default(),
+    };
+    let config = SecretConfig {
+        provider: SecretProvider::OnePassword,
+        bws_binary: "bws".to_owned(),
+        bws_env_file: "unused".into(),
+        bws_openai_id: None,
+        bws_paseo_id: None,
+        bws_spark_id: None,
+        onepassword_binary: "op".to_owned(),
+        onepassword_openai_ref: Some("op://vault/openai/key".to_owned()),
+        onepassword_paseo_ref: Some("op://vault/paseo/password".to_owned()),
+        onepassword_spark_ref: None,
+    };
+    let environment = HashMap::from([("XAI_API_KEY".to_owned(), "xai-env".to_owned())]);
+    let secrets = load_secrets(&config, &executor, &environment);
+    assert_eq!(secrets.openai_api_key.as_deref(), Some("openai"));
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("xai-env"));
+    assert_eq!(secrets.paseo_password.as_deref(), Some("paseo"));
+    assert_eq!(executor.calls.lock().expect("calls lock").len(), 2);
 }
 
 #[test]

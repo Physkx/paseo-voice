@@ -14,6 +14,7 @@ use crate::secrets::{SecretConfig, SecretProvider};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EndpointLocation {
     OpenAiCloud,
+    XaiCloud,
     BrokerConfiguredLocal,
     BrokerConfiguredRemote,
 }
@@ -22,6 +23,7 @@ impl EndpointLocation {
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::OpenAiCloud => "OpenAI cloud",
+            Self::XaiCloud => "xAI cloud",
             Self::BrokerConfiguredLocal => "Broker-configured local endpoint",
             Self::BrokerConfiguredRemote => "Broker-configured remote endpoint",
         }
@@ -114,12 +116,16 @@ pub struct Config {
     pub bws_secret_id_openai: Option<String>,
     /// Bitwarden Paseo secret ID.
     pub bws_secret_id_paseo: Option<String>,
+    /// Bitwarden model (summariser / dictation cleanup) secret ID.
+    pub bws_secret_id_spark: Option<String>,
     /// 1Password executable.
     pub one_password_bin: String,
     /// 1Password `OpenAI` reference.
     pub one_password_secret_ref_openai: Option<String>,
     /// 1Password Paseo reference.
     pub one_password_secret_ref_paseo: Option<String>,
+    /// 1Password model (summariser / dictation cleanup) reference.
+    pub one_password_secret_ref_spark: Option<String>,
 }
 
 impl Default for Config {
@@ -150,9 +156,11 @@ impl Default for Config {
             bws_env_file: home.join(".config/bws.env"),
             bws_secret_id_openai: None,
             bws_secret_id_paseo: None,
+            bws_secret_id_spark: None,
             one_password_bin: "op".to_owned(),
             one_password_secret_ref_openai: None,
             one_password_secret_ref_paseo: None,
+            one_password_secret_ref_spark: None,
         }
     }
 }
@@ -215,6 +223,11 @@ pub fn load(environment: &HashMap<String, String>) -> Result<Config, String> {
     );
     optional_override(
         environment,
+        "PASEO_VOICE_BWS_SECRET_ID_SPARK",
+        &mut config.bws_secret_id_spark,
+    );
+    optional_override(
+        environment,
         "PASEO_VOICE_ONEPASSWORD_SECRET_REF_OPENAI",
         &mut config.one_password_secret_ref_openai,
     );
@@ -222,6 +235,11 @@ pub fn load(environment: &HashMap<String, String>) -> Result<Config, String> {
         environment,
         "PASEO_VOICE_ONEPASSWORD_SECRET_REF_PASEO",
         &mut config.one_password_secret_ref_paseo,
+    );
+    optional_override(
+        environment,
+        "PASEO_VOICE_ONEPASSWORD_SECRET_REF_SPARK",
+        &mut config.one_password_secret_ref_spark,
     );
     config.listen_port =
         number_override(environment, "PASEO_VOICE_LISTEN_PORT", config.listen_port)?;
@@ -336,14 +354,15 @@ fn validate_summariser_url(
         "http" => return Err("remote summariser base URL must use https".to_owned()),
         _ => return Err("invalid summariser base URL".to_owned()),
     }
-    Ok(ValidatedEndpoint {
-        url,
-        location: if loopback {
-            EndpointLocation::BrokerConfiguredLocal
-        } else {
-            EndpointLocation::BrokerConfiguredRemote
-        },
-    })
+    let official_xai = matches!(value.trim_end_matches('/'), "https://api.x.ai/v1");
+    let location = if official_xai {
+        EndpointLocation::XaiCloud
+    } else if loopback {
+        EndpointLocation::BrokerConfiguredLocal
+    } else {
+        EndpointLocation::BrokerConfiguredRemote
+    };
+    Ok(ValidatedEndpoint { url, location })
 }
 
 fn has_nonempty_authority(value: &str) -> bool {
@@ -496,9 +515,11 @@ impl Config {
             bws_env_file: self.bws_env_file.clone(),
             bws_openai_id: self.bws_secret_id_openai.clone(),
             bws_paseo_id: self.bws_secret_id_paseo.clone(),
+            bws_spark_id: self.bws_secret_id_spark.clone(),
             onepassword_binary: self.one_password_bin.clone(),
             onepassword_openai_ref: self.one_password_secret_ref_openai.clone(),
             onepassword_paseo_ref: self.one_password_secret_ref_paseo.clone(),
+            onepassword_spark_ref: self.one_password_secret_ref_spark.clone(),
         })
     }
 }

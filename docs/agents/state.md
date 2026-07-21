@@ -12,6 +12,8 @@ This file holds current operational facts. Architecture belongs in `DECISIONS.md
 | Browser       | Secret-free protocol-v2 dashboard with typed, live voice, and English dictation modes  |
 | Voice         | OpenAI Realtime or a configured custom endpoint; text-only mock mode remains available |
 | Summaries     | Manual reads plus opt-in alpha polling announcements through OpenAI Realtime           |
+| Cleanup model | OpenAI-compatible chat completions; official xAI (`https://api.x.ai/v1`) supported     |
+| Secrets       | Bitwarden, 1Password (OpenAI + Paseo + optional model key), or environment             |
 | Writes        | Provenance-bound proposal plus browser or deterministic console confirmation           |
 | Hosts         | Connection-scoped selector over trusted broker profiles                                |
 | Persistence   | Runtime output is limited to content-free SQLite metadata and browser preferences      |

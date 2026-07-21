@@ -82,13 +82,15 @@ approved.
 
 ### Endpoint and credential isolation
 
-OpenAI and Paseo secrets are resolved once at startup from one selected provider: Bitwarden Secrets
-Manager, 1Password CLI, or the process environment. The separate model bearer is a narrow process
-environment input that is not forwarded to secret-manager children. Values remain in memory and
-are excluded from logs.
+OpenAI, Paseo, and optional model (summariser / dictation cleanup) secrets are resolved once at
+startup from one selected provider: Bitwarden Secrets Manager, 1Password CLI, or the process
+environment. When a manager does not supply the model key, `PASEO_VOICE_SPARK_API_KEY` or
+`XAI_API_KEY` remains a narrow process environment fallback that is not forwarded to secret-manager
+children. Values remain in memory and are excluded from logs.
 
 The OpenAI bearer is sent only to the exact official Realtime endpoint. The model bearer is sent
-only by the shared summarisation and dictation-cleanup HTTP client. Plain model HTTP remains
+only by the shared summarisation and dictation-cleanup HTTP client, including official xAI
+(`https://api.x.ai/v1`) and other OpenAI-compatible HTTPS endpoints. Plain model HTTP remains
 loopback-only unless the operator explicitly opts in to a Tailscale IPv4 endpoint. Other
 non-loopback endpoints require TLS. The model HTTP client disables redirects and ambient proxies so
 content is not forwarded to an unapproved destination.

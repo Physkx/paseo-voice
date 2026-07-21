@@ -1,0 +1,12 @@
+development:
+  command: null
+  healthcheck: null
+  smoke_test: null
+  rollback: null
+staging:
+  command: null
+  healthcheck: null
+  smoke_test: null
+  rollback: null
+production:
+  protected: true

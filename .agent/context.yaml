@@ -1,0 +1,6 @@
+project_id: paseo-voice-8fa2f027
+project_name: paseo-voice
+obsidian_path: Projects/paseo-voice
+qdrant_collection: project-paseo-voice-8fa2f027
+context_revision: 16bed6ff8b751962
+workflow: paseo

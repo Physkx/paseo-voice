@@ -29,12 +29,16 @@ pub struct SecretConfig {
     pub bws_openai_id: Option<String>,
     /// Paseo Bitwarden secret ID.
     pub bws_paseo_id: Option<String>,
+    /// Model (summariser / dictation cleanup) Bitwarden secret ID.
+    pub bws_spark_id: Option<String>,
     /// 1Password executable.
     pub onepassword_binary: String,
     /// `OpenAI` 1Password reference.
     pub onepassword_openai_ref: Option<String>,
     /// Paseo 1Password reference.
     pub onepassword_paseo_ref: Option<String>,
+    /// Model (summariser / dictation cleanup) 1Password reference.
+    pub onepassword_spark_ref: Option<String>,
 }
 
 /// Secrets retained only in process memory.
@@ -58,7 +62,7 @@ pub fn load_secrets<E: ProcessExecutor>(
     match config.provider {
         SecretProvider::Environment => Secrets {
             openai_api_key: nonempty(environment.get("OPENAI_API_KEY")),
-            spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
+            spark_api_key: environment_model_key(environment),
             paseo_password: nonempty(environment.get("PASEO_PASSWORD")),
         },
         SecretProvider::Bitwarden => {
@@ -68,7 +72,7 @@ pub fn load_secrets<E: ProcessExecutor>(
             let Some(token) = token else {
                 return Secrets {
                     openai_api_key: None,
-                    spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
+                    spark_api_key: environment_model_key(environment),
                     paseo_password: None,
                 };
             };
@@ -77,38 +81,41 @@ pub fn load_secrets<E: ProcessExecutor>(
                     .bws_openai_id
                     .as_deref()
                     .and_then(|id| read_bws(executor, &config.bws_binary, id, &token, environment)),
-                spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
+                spark_api_key: config
+                    .bws_spark_id
+                    .as_deref()
+                    .and_then(|id| read_bws(executor, &config.bws_binary, id, &token, environment))
+                    .or_else(|| environment_model_key(environment)),
                 paseo_password: config
                     .bws_paseo_id
                     .as_deref()
                     .and_then(|id| read_bws(executor, &config.bws_binary, id, &token, environment)),
             }
         }
-        SecretProvider::OnePassword => Secrets {
-            openai_api_key: config
-                .onepassword_openai_ref
-                .as_deref()
-                .and_then(|reference| {
-                    read_onepassword(
-                        executor,
-                        &config.onepassword_binary,
-                        reference,
-                        &onepassword_environment(environment),
-                    )
-                }),
-            spark_api_key: nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY")),
-            paseo_password: config
-                .onepassword_paseo_ref
-                .as_deref()
-                .and_then(|reference| {
-                    read_onepassword(
-                        executor,
-                        &config.onepassword_binary,
-                        reference,
-                        &onepassword_environment(environment),
-                    )
-                }),
-        },
+        SecretProvider::OnePassword => {
+            let op_env = onepassword_environment(environment);
+            Secrets {
+                openai_api_key: config
+                    .onepassword_openai_ref
+                    .as_deref()
+                    .and_then(|reference| {
+                        read_onepassword(executor, &config.onepassword_binary, reference, &op_env)
+                    }),
+                spark_api_key: config
+                    .onepassword_spark_ref
+                    .as_deref()
+                    .and_then(|reference| {
+                        read_onepassword(executor, &config.onepassword_binary, reference, &op_env)
+                    })
+                    .or_else(|| environment_model_key(environment)),
+                paseo_password: config
+                    .onepassword_paseo_ref
+                    .as_deref()
+                    .and_then(|reference| {
+                        read_onepassword(executor, &config.onepassword_binary, reference, &op_env)
+                    }),
+            }
+        }
     }
 }
 
@@ -116,9 +123,17 @@ fn nonempty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
 }
 
+/// Dedicated model key first, then `XAI_API_KEY` for xAI subscription credentials.
+fn environment_model_key(environment: &HashMap<String, String>) -> Option<String> {
+    nonempty(environment.get("PASEO_VOICE_SPARK_API_KEY"))
+        .or_else(|| nonempty(environment.get("XAI_API_KEY")))
+}
+
 fn onepassword_environment(environment: &HashMap<String, String>) -> HashMap<String, String> {
     let mut environment = environment.clone();
+    // Keep model credentials out of the op child process.
     environment.remove("PASEO_VOICE_SPARK_API_KEY");
+    environment.remove("XAI_API_KEY");
     environment
 }
 

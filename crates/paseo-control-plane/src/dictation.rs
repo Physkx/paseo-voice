@@ -519,6 +519,18 @@ mod tests {
                 "Broker-configured remote endpoint",
                 "Broker-configured local endpoint",
             ),
+            (
+                "wss://api.openai.com/v1/realtime",
+                "https://api.x.ai/v1",
+                "OpenAI cloud",
+                "xAI cloud",
+            ),
+            (
+                "wss://api.openai.com/v1/realtime",
+                "https://api.x.ai/v1/",
+                "OpenAI cloud",
+                "xAI cloud",
+            ),
         ] {
             let config = Config {
                 openai_base_url: realtime.to_owned(),

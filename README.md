@@ -109,25 +109,48 @@ Select one provider for the process with `secretProvider` or
 `PASEO_VOICE_SECRET_PROVIDER`: `bitwarden`, `onepassword`, or `environment`. Bitwarden is the
 default.
 
-- `environment` reads `OPENAI_API_KEY`, `PASEO_VOICE_SPARK_API_KEY`, and `PASEO_PASSWORD`. Start
-  from [.env.example](.env.example) and load it through your shell or secret manager; the
-  application does not load `.env` files.
+- `environment` reads `OPENAI_API_KEY`, `PASEO_PASSWORD`, and the model bearer from
+  `PASEO_VOICE_SPARK_API_KEY` or `XAI_API_KEY` (dedicated spark key wins). Start from
+  [.env.example](.env.example) and load it through your shell or secret manager; the application
+  does not load `.env` files.
 - `bitwarden` reads a Secrets Manager token from `~/.config/bws.env` and resolves the configured
-  `bwsSecretIdOpenai` and `bwsSecretIdPaseo` values.
-- `onepassword` resolves the configured `onePasswordSecretRefOpenai` and
-  `onePasswordSecretRefPaseo` references through `op read`.
+  `bwsSecretIdOpenai`, `bwsSecretIdPaseo`, and optional `bwsSecretIdSpark` values.
+- `onepassword` resolves the configured `onePasswordSecretRefOpenai`, `onePasswordSecretRefPaseo`,
+  and optional `onePasswordSecretRefSpark` references through `op read`. 1Password is fully
+  supported for OpenAI Realtime, Paseo, and the model (summarisation / dictation cleanup) key.
 
-`PASEO_VOICE_SPARK_API_KEY` always supplies only the model-endpoint bearer. It is a narrow
-environment input even when Bitwarden or 1Password supplies the OpenAI and Paseo credentials, and
-it is not forwarded to their child processes.
+When Bitwarden or 1Password does not supply a model key, `PASEO_VOICE_SPARK_API_KEY` or
+`XAI_API_KEY` is still accepted as a narrow environment fallback. Those values are never forwarded
+to secret-manager child processes.
 
 Secrets are resolved once at startup. Missing OpenAI credentials affect Realtime only; missing
-Paseo credentials disable Paseo tools without preventing the server from starting. Restart after
+Paseo credentials disable Paseo tools without preventing the server from starting. Missing model
+credentials make summarisation and dictation cleanup degrade to safe local fallbacks. Restart after
 secret rotation.
+
+### Model endpoint (summarisation and dictation cleanup)
+
+Configure any OpenAI-compatible chat-completions base URL with `sparkBaseUrl` /
+`PASEO_VOICE_SPARK_BASE_URL` and `sparkModel` / `PASEO_VOICE_SPARK_MODEL`.
+
+For an **xAI** subscription or API key:
+
+```json
+{
+  "sparkBaseUrl": "https://api.x.ai/v1",
+  "sparkModel": "grok-4-1-fast-non-reasoning",
+  "secretProvider": "onepassword",
+  "onePasswordSecretRefSpark": "op://Private/xAI/credential"
+}
+```
+
+Or with the environment provider, set `XAI_API_KEY` (or `PASEO_VOICE_SPARK_API_KEY`) and point
+`sparkBaseUrl` at `https://api.x.ai/v1`. The exact official xAI base URL is labeled `xAI cloud` in
+browser capability metadata. Local loopback models remain supported as before.
 
 ### Endpoint policy
 
-The OpenAI bearer token is sent only to the exact official Realtime endpoint. The separate Spark
+The OpenAI bearer token is sent only to the exact official Realtime endpoint. The separate model
 bearer is sent only through the model HTTP client used for summarisation and dictation cleanup.
 Plain `ws://` is accepted only on loopback. Plain model `http://` is accepted on loopback, or for a
 Tailscale IPv4 address when `allowInsecureTailscaleSpark` or

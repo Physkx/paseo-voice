@@ -1,0 +1,8 @@
+lifecycle: development
+version: 0.2.0
+default_deploy_target: development
+production_locked: false
+cost:
+  policy: existing-and-free-only
+  monthly_incremental_limit_usd: 0
+  authorized_services: []
