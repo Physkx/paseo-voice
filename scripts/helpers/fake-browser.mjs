@@ -587,7 +587,7 @@ export async function createAppHarness({
     }
 
     postMessage(message, transfer = []) {
-      this.messages.push({ message, transfer });
+      this.messages.push({ message: structuredClone(message, { transfer }), transfer });
     }
   }
 
@@ -703,7 +703,8 @@ export async function createAppHarness({
     }
 
     receive(frame) {
-      const data = typeof frame === "string" ? frame : JSON.stringify(frame);
+      const data =
+        typeof frame === "string" || frame instanceof ArrayBuffer ? frame : JSON.stringify(frame);
       this.dispatchEvent(createBrowserEvent("message", { data }));
     }
 

@@ -4,13 +4,17 @@ import test from "node:test";
 import vm from "node:vm";
 
 const workletUrl = new URL("../public/pcm-playback-worklet.js", import.meta.url);
-const playbackCapacitySamples = 48_000;
-
 async function createPlaybackWorklet() {
   const registrations = new Map();
+  const messages = [];
   class AudioWorkletProcessor {
     constructor() {
-      this.port = { onmessage: null };
+      this.port = {
+        onmessage: null,
+        postMessage(message) {
+          messages.push(structuredClone(message));
+        },
+      };
     }
   }
 
@@ -31,6 +35,7 @@ async function createPlaybackWorklet() {
   assert.equal(typeof processor.port.onmessage, "function");
 
   return {
+    messages,
     post(data) {
       processor.port.onmessage({ data });
     },
@@ -51,9 +56,24 @@ function pcm16(samples) {
   return new Int16Array(samples).buffer;
 }
 
+function audio(samples, epoch = 0) {
+  return { type: "audio", epoch, pcm: pcm16(samples) };
+}
+
+test("versioned audio renders completely and returns consumed capacity", async () => {
+  const worklet = await createPlaybackWorklet();
+  worklet.post(audio([8192, -8192]));
+
+  assert.deepEqual(worklet.render(3), {
+    alive: true,
+    channels: [[0.25, -0.25, 0]],
+  });
+  assert.deepEqual(worklet.messages, [{ type: "consumed", epoch: 0, samples: 2 }]);
+});
+
 test("delivered flush control cuts off queued audio and starts a new playback boundary", async () => {
   const worklet = await createPlaybackWorklet();
-  worklet.post(pcm16([8192, 16384, 24576]));
+  worklet.post(audio([8192, 16384, 24576]));
 
   assert.deepEqual(worklet.render(1, 2), {
     alive: true,
@@ -61,13 +81,13 @@ test("delivered flush control cuts off queued audio and starts a new playback bo
   });
 
   // Audio delivered before the control remains ordered; the worklet infers no cross-direction cutoff.
-  worklet.post(pcm16([-32768]));
+  worklet.post(audio([-32768]));
   assert.deepEqual(worklet.render(1, 2), {
     alive: true,
     channels: [[0.5], [0.5]],
   });
 
-  worklet.post({ type: "flush" });
+  worklet.post({ type: "flush", epoch: 1 });
   assert.deepEqual(worklet.render(3, 2), {
     alive: true,
     channels: [
@@ -83,7 +103,7 @@ test("delivered flush control cuts off queued audio and starts a new playback bo
     ],
   });
 
-  worklet.post(pcm16([-16384]));
+  worklet.post(audio([-16384], 1));
   assert.deepEqual(worklet.render(3, 2), {
     alive: true,
     channels: [
@@ -112,46 +132,36 @@ test("invalid messages do not throw or poison later playback", async () => {
     assert.doesNotThrow(() => worklet.post(message));
   }
 
-  worklet.post(pcm16([8192, -8192]));
+  worklet.post(audio([8192, -8192]));
   assert.deepEqual(worklet.render(3), {
     alive: true,
     channels: [[0.25, -0.25, 0]],
   });
 });
 
-test("overflow preserves buffered order and permanently drops only incoming excess", async () => {
+test("a frame that cannot fit is rejected whole instead of spliced into playback", async () => {
   const worklet = await createPlaybackWorklet();
-  worklet.post(pcm16([8192, 16384, 24576, -8192]));
+  const full = new Int16Array(48_000);
+  full.fill(-16384);
+  full[0] = 8192;
+  full[1] = 16384;
+  full[47_999] = 24576;
+  worklet.post({ type: "audio", epoch: 0, pcm: full.buffer });
   assert.deepEqual(worklet.render(2), {
     alive: true,
     channels: [[0.25, 0.5]],
   });
 
-  const acceptedIncoming = playbackCapacitySamples - 2;
-  const incoming = new Int16Array(playbackCapacitySamples);
-  incoming.fill(-16384);
-  incoming[acceptedIncoming - 1] = 8192;
-  incoming[acceptedIncoming] = 16384;
-  incoming[acceptedIncoming + 1] = 24576;
-  worklet.post(incoming.buffer);
-
-  assert.deepEqual(worklet.render(4), {
-    alive: true,
-    channels: [[0.75, -0.25, -0.5, -0.5]],
-  });
-  const bulk = worklet.render(acceptedIncoming - 3);
+  worklet.post(audio([16384, 24576, -8192]));
+  const bulk = worklet.render(47_997);
   assert.equal(bulk.alive, true);
   assert.ok(bulk.channels[0].every((sample) => sample === -0.5));
-  assert.deepEqual(worklet.render(4), {
+  assert.deepEqual(worklet.render(3), {
     alive: true,
-    channels: [[0.25, 0, 0, 0]],
-  });
-  assert.deepEqual(worklet.render(2), {
-    alive: true,
-    channels: [[0, 0]],
+    channels: [[0.75, 0, 0]],
   });
 
-  worklet.post(pcm16([-8192]));
+  worklet.post(audio([-8192]));
   assert.deepEqual(worklet.render(2), {
     alive: true,
     channels: [[-0.25, 0]],
@@ -160,7 +170,7 @@ test("overflow preserves buffered order and permanently drops only incoming exce
 
 test("process stays alive without output channels and leaves audio queued", async () => {
   const worklet = await createPlaybackWorklet();
-  worklet.post(pcm16([8192]));
+  worklet.post(audio([8192]));
 
   assert.equal(worklet.process([]), true);
   assert.equal(worklet.process([[]]), true);

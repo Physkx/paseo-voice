@@ -37,7 +37,7 @@ import {
   proposalStateFromFrame,
   shouldFocusProposalConfirm,
 } from "./interaction-gate.js";
-import { enqueuePlaybackFrame } from "./playback-frame.js";
+import { createPlaybackController } from "./playback-frame.js";
 import { isInteractiveTarget, validateShortcuts } from "./shortcut-config.js";
 import { createBlockAvatar } from "./avatar-blocks.js";
 import {
@@ -257,6 +257,7 @@ let draftAwaitingReconnect = false;
 let audioContext = null;
 let captureNode = null;
 let playbackNode = null;
+let playbackController = null;
 let microphoneStream = null;
 let microphoneSource = null;
 let microphoneTrackListenerCleanup = null;
@@ -1157,6 +1158,7 @@ async function disposeAudioResources() {
   const source = microphoneSource;
   const capture = captureNode;
   const playback = playbackNode;
+  const playbackFlow = playbackController;
   const micAnalyser = avatarMicAnalyser;
   const voiceAnalyser = avatarVoiceAnalyser;
 
@@ -1166,6 +1168,7 @@ async function disposeAudioResources() {
   microphoneTrackListenerCleanup = null;
   captureNode = null;
   playbackNode = null;
+  playbackController = null;
   avatarMicAnalyser = null;
   avatarVoiceAnalyser = null;
   usingSystemDefault = true;
@@ -1179,9 +1182,9 @@ async function disposeAudioResources() {
       // Closing the context below remains the terminal capture boundary.
     }
   }
-  if (playback) {
+  if (playbackFlow) {
     try {
-      playback.port.postMessage({ type: "flush" });
+      playbackFlow.dispose();
     } catch {
       // Disconnecting and closing the graph below still drops playback.
     }
@@ -1329,7 +1332,7 @@ function handleCapturedAudio(event) {
     return;
   }
   if (loopback) {
-    enqueuePlaybackFrame(playbackNode?.port, event.data);
+    playbackController?.enqueue(event.data);
     return;
   }
   sendSocketBinary(event.data);
@@ -1369,6 +1372,16 @@ async function initAudio(setupPageGeneration) {
     playbackNode = new AudioWorkletNode(audioContext, "pcm-playback", {
       numberOfInputs: 0,
       outputChannelCount: [1],
+    });
+    playbackController = createPlaybackController(playbackNode.port, {
+      onOverflow() {
+        logActivity(
+          "Audio playback stopped because the response exceeded the local buffer.",
+          "error",
+        );
+        setInterfaceState("error", "audio playback buffer exceeded");
+        playCue("error");
+      },
     });
     playbackNode.connect(audioContext.destination);
     captureNode = new AudioWorkletNode(audioContext, "pcm-capture", {
@@ -1692,7 +1705,7 @@ function playCue(kind) {
 }
 
 function flushPlayback() {
-  if (playbackNode) playbackNode.port.postMessage({ type: "flush" });
+  playbackController?.flush();
 }
 
 function startTalking() {
@@ -2002,6 +2015,7 @@ function handleServerJson(msg) {
         return;
       }
       if (nextState === "ready") {
+        playbackController?.recover();
         restoreMicrophoneInterfaceState();
         assistantEntry = null;
         return;
@@ -2344,7 +2358,7 @@ function connect() {
       }
       return;
     }
-    if (enqueuePlaybackFrame(playbackNode?.port, event.data)) {
+    if (playbackController?.enqueue(event.data)) {
       setInterfaceState("speaking");
     }
   });

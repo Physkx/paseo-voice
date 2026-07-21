@@ -1,13 +1,14 @@
 /**
  * Plays queued Int16 PCM at the AudioContext rate (24000 Hz). The main
- * thread posts ArrayBuffers of pcm16 to enqueue and {type:"flush"} to drop
- * everything (barge-in). The queue holds at most 48,000 samples (two seconds,
- * 96 KB); an incoming buffer is truncated to the remaining capacity.
+ * thread posts versioned pcm16 frames and flush controls. The queue holds at
+ * most 48,000 samples (two seconds, 96 KB), accepts frames only in full, and
+ * returns consumed-sample credits so the main thread can apply backpressure.
  * A flush cuts off audio only when its control reaches this port. The broker
  * sends that control after accepting PTT; this processor makes no
  * cross-direction transport ordering assumption.
  */
 const MAX_QUEUED_SAMPLES = 48_000;
+const CAPACITY_CREDIT_SAMPLES = 2_400;
 
 class PcmPlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -16,23 +17,34 @@ class PcmPlaybackProcessor extends AudioWorkletProcessor {
     this.readIndex = 0;
     this.writeIndex = 0;
     this.queuedSamples = 0;
+    this.epoch = 0;
+    this.consumedSinceCredit = 0;
     this.port.onmessage = (event) => {
       const data = event.data;
       if (data && data.type === "flush") {
         this.readIndex = 0;
         this.writeIndex = 0;
         this.queuedSamples = 0;
+        this.consumedSinceCredit = 0;
+        if (Number.isSafeInteger(data.epoch) && data.epoch >= 0) this.epoch = data.epoch;
         return;
       }
-      if (data instanceof ArrayBuffer && data.byteLength > 0 && data.byteLength % 2 === 0) {
-        const incoming = new Int16Array(data);
-        const accepted = Math.min(incoming.length, MAX_QUEUED_SAMPLES - this.queuedSamples);
-        for (let i = 0; i < accepted; i += 1) {
+      if (
+        data?.type === "audio" &&
+        data.epoch === this.epoch &&
+        data.pcm instanceof ArrayBuffer &&
+        data.pcm.byteLength > 0 &&
+        data.pcm.byteLength % 2 === 0
+      ) {
+        const incoming = new Int16Array(data.pcm);
+        if (incoming.length > MAX_QUEUED_SAMPLES - this.queuedSamples) return;
+        for (let i = 0; i < incoming.length; i += 1) {
           this.samples[this.writeIndex] = incoming[i];
           this.writeIndex += 1;
           if (this.writeIndex === MAX_QUEUED_SAMPLES) this.writeIndex = 0;
         }
-        this.queuedSamples += accepted;
+        this.queuedSamples += incoming.length;
+        return;
       }
     };
   }
@@ -49,6 +61,18 @@ class PcmPlaybackProcessor extends AudioWorkletProcessor {
       if (this.readIndex === MAX_QUEUED_SAMPLES) this.readIndex = 0;
     }
     this.queuedSamples -= written;
+    this.consumedSinceCredit += written;
+    if (
+      this.consumedSinceCredit >= CAPACITY_CREDIT_SAMPLES ||
+      (written > 0 && this.queuedSamples === 0)
+    ) {
+      this.port.postMessage({
+        type: "consumed",
+        epoch: this.epoch,
+        samples: this.consumedSinceCredit,
+      });
+      this.consumedSinceCredit = 0;
+    }
     for (let i = written; i < out.length; i += 1) out[i] = 0;
     for (let channel = 1; channel < channels.length; channel += 1) {
       channels[channel].set(out);

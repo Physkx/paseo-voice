@@ -281,6 +281,68 @@ test("real PTT events retain the recording and summary captured at start", async
   assert.equal(socket.sent.length, sentAfterAbort);
 });
 
+test("burst response audio waits for playback capacity instead of dropping frame tails", async (t) => {
+  const browser = await createAppHarness();
+  t.after(() => browser.restore());
+  const socket = readyConnection(browser);
+  await browser.enableMicrophone();
+  const playbackPort = browser.audioWorkletNodes[0].port;
+  const first = new ArrayBuffer(96_000);
+  const second = new ArrayBuffer(4_800);
+
+  socket.receive(first);
+  socket.receive(second);
+  assert.equal(playbackPort.messages.length, 1);
+  assert.deepEqual(playbackPort.messages[0].message, {
+    type: "audio",
+    epoch: 0,
+    pcm: new ArrayBuffer(96_000),
+  });
+  assert.equal(second.byteLength, 4_800);
+
+  playbackPort.onmessage({ data: { type: "consumed", epoch: 0, samples: 2_400 } });
+  assert.equal(playbackPort.messages.length, 2);
+  assert.deepEqual(playbackPort.messages[1].message, {
+    type: "audio",
+    epoch: 0,
+    pcm: new ArrayBuffer(4_800),
+  });
+  assert.equal(second.byteLength, 0);
+});
+
+test("playback backlog overflow stops the response and reports the failure", async (t) => {
+  const browser = await createAppHarness();
+  t.after(() => browser.restore());
+  const socket = readyConnection(browser);
+  await browser.enableMicrophone();
+  const playbackPort = browser.audioWorkletNodes[0].port;
+
+  for (let frame = 0; frame < 31; frame += 1) {
+    socket.receive(new ArrayBuffer(96_000));
+  }
+  socket.receive(new ArrayBuffer(2));
+
+  assert.deepEqual(playbackPort.messages.at(-1).message, { type: "flush", epoch: 1 });
+  assert.equal(browser.element("avatar").dataset.state, "error");
+  assert.equal(
+    browser
+      .element("activity")
+      .children.at(-1)
+      .textContent.endsWith(
+        "Audio playback stopped because the response exceeded the local buffer.",
+      ),
+    true,
+  );
+
+  socket.receive({ type: "state", state: "ready" });
+  socket.receive(new ArrayBuffer(2));
+  assert.deepEqual(playbackPort.messages.at(-1).message, {
+    type: "audio",
+    epoch: 1,
+    pcm: new ArrayBuffer(2),
+  });
+});
+
 test("live recording state and rejection frames require exact recording correlation", async (t) => {
   const browser = await createAppHarness();
   t.after(() => browser.restore());
@@ -1020,7 +1082,10 @@ test("pagehide aborts live capture and production code disposes page resources o
   assert.ok(graphNodes.length > 0);
   assert.ok(graphNodes.every((node) => node.disconnected));
   assert.ok(browser.audioWorkletNodes.every((node) => node.port.onmessage === null));
-  assert.deepEqual(browser.audioWorkletNodes[0].port.messages.at(-1).message, { type: "flush" });
+  assert.deepEqual(browser.audioWorkletNodes[0].port.messages.at(-1).message, {
+    type: "flush",
+    epoch: 2,
+  });
   assert.deepEqual(browser.audioWorkletNodes[1].port.messages.at(-1).message, {
     type: "set-active",
     active: false,

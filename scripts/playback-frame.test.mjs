@@ -1,48 +1,129 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MessageChannel } from "node:worker_threads";
 
-import { enqueuePlaybackFrame } from "../public/playback-frame.js";
+import { createPlaybackController } from "../public/playback-frame.js";
 
-test("accepted PCM transfers ownership to the playback worklet", () => {
-  const channel = new MessageChannel();
+test("burst audio waits for enough worklet capacity to preserve the complete frame", () => {
   const calls = [];
   const port = {
+    onmessage: null,
     postMessage(message, transfer) {
-      calls.push({ message, transfer });
-      channel.port1.postMessage(message, transfer);
+      calls.push({ message: structuredClone(message, { transfer }), transfer });
     },
   };
-  const frame = new Int16Array([8192, -8192]).buffer;
+  const playback = createPlaybackController(port);
+  const first = new ArrayBuffer(96_000);
+  const second = new ArrayBuffer(4_800);
 
-  try {
-    assert.equal(enqueuePlaybackFrame(port, frame), true);
-    assert.equal(calls.length, 1);
-    assert.strictEqual(calls[0].message, frame);
-    assert.equal(calls[0].transfer.length, 1);
-    assert.strictEqual(calls[0].transfer[0], frame);
-    assert.equal(frame.byteLength, 0);
-    assert.equal(enqueuePlaybackFrame(port, frame), false);
-    assert.equal(calls.length, 1);
-  } finally {
-    channel.port1.close();
-    channel.port2.close();
-  }
+  assert.equal(playback.enqueue(first), true);
+  assert.equal(playback.enqueue(second), true);
+  assert.equal(calls.length, 1);
+  assert.equal(first.byteLength, 0);
+  assert.equal(second.byteLength, 4_800);
+
+  port.onmessage({ data: { type: "consumed", epoch: 0, samples: 2_399 } });
+  assert.equal(calls.length, 1);
+  assert.equal(second.byteLength, 4_800);
+
+  port.onmessage({ data: { type: "consumed", epoch: 0, samples: 1 } });
+  assert.equal(calls.length, 2);
+  assert.equal(second.byteLength, 0);
+  assert.equal(calls[1].message.type, "audio");
+  assert.equal(calls[1].message.epoch, 0);
+  assert.equal(calls[1].message.pcm.byteLength, 4_800);
 });
 
-test("only bounded even ArrayBuffers produce the app speaking decision", () => {
+test("backlog overflow flushes the response once instead of splicing more audio", () => {
   const calls = [];
+  const overflows = [];
   const port = {
+    onmessage: null,
     postMessage(message, transfer) {
-      calls.push({ message, transfer });
+      calls.push({ message: structuredClone(message, { transfer }), transfer });
     },
   };
-  const states = [];
-  const receive = (frame) => {
-    const enqueued = enqueuePlaybackFrame(port, frame);
-    if (enqueued) states.push("speaking");
-    return enqueued;
+  const playback = createPlaybackController(port, {
+    onOverflow() {
+      overflows.push("overflow");
+    },
+  });
+
+  for (let frame = 0; frame < 31; frame += 1) {
+    assert.equal(playback.enqueue(new ArrayBuffer(96_000)), true);
+  }
+  assert.equal(calls.length, 1);
+
+  assert.equal(playback.enqueue(new ArrayBuffer(2)), false);
+  assert.deepEqual(overflows, ["overflow"]);
+  assert.deepEqual(calls.at(-1).message, { type: "flush", epoch: 1 });
+
+  assert.equal(playback.enqueue(new ArrayBuffer(2)), false);
+  assert.deepEqual(overflows, ["overflow"]);
+  assert.equal(calls.length, 2);
+});
+
+test("flush discards pending audio and ignores stale capacity credits", () => {
+  const calls = [];
+  const port = {
+    onmessage: null,
+    postMessage(message, transfer) {
+      calls.push({ message: structuredClone(message, { transfer }), transfer });
+    },
   };
+  const playback = createPlaybackController(port);
+  const pending = new ArrayBuffer(4_800);
+
+  assert.equal(playback.enqueue(new ArrayBuffer(96_000)), true);
+  assert.equal(playback.enqueue(pending), true);
+  playback.flush();
+  assert.deepEqual(calls.at(-1).message, { type: "flush", epoch: 1 });
+  assert.equal(pending.byteLength, 4_800);
+
+  port.onmessage({ data: { type: "consumed", epoch: 0, samples: 48_000 } });
+  assert.equal(calls.length, 2);
+
+  assert.equal(playback.enqueue(new ArrayBuffer(2)), true);
+  assert.deepEqual(calls.at(-1).message, {
+    type: "audio",
+    epoch: 1,
+    pcm: new ArrayBuffer(2),
+  });
+});
+
+test("recovery after an overflow accepts a later response without another flush", () => {
+  const calls = [];
+  const port = {
+    onmessage: null,
+    postMessage(message, transfer) {
+      calls.push({ message: structuredClone(message, { transfer }), transfer });
+    },
+  };
+  const playback = createPlaybackController(port);
+
+  for (let frame = 0; frame < 31; frame += 1) {
+    assert.equal(playback.enqueue(new ArrayBuffer(96_000)), true);
+  }
+  assert.equal(playback.enqueue(new ArrayBuffer(2)), false);
+  assert.deepEqual(calls.at(-1).message, { type: "flush", epoch: 1 });
+
+  playback.recover();
+  assert.equal(playback.enqueue(new ArrayBuffer(2)), true);
+  assert.deepEqual(calls.at(-1).message, {
+    type: "audio",
+    epoch: 1,
+    pcm: new ArrayBuffer(2),
+  });
+});
+
+test("only bounded even ArrayBuffers enter playback", () => {
+  const calls = [];
+  const port = {
+    onmessage: null,
+    postMessage(message, transfer) {
+      calls.push({ message: structuredClone(message, { transfer }), transfer });
+    },
+  };
+  const playback = createPlaybackController(port);
   const detached = new ArrayBuffer(2);
   structuredClone(detached, { transfer: [detached] });
 
@@ -58,35 +139,12 @@ test("only bounded even ArrayBuffers produce the app speaking decision", () => {
   ]) {
     let result;
     assert.doesNotThrow(() => {
-      result = receive(frame);
+      result = playback.enqueue(frame);
     });
     assert.equal(result, false);
   }
-  assert.deepEqual(states, []);
   assert.equal(calls.length, 0);
 
-  assert.equal(receive(new ArrayBuffer(96_000)), true);
-  assert.deepEqual(states, ["speaking"]);
+  assert.equal(playback.enqueue(new ArrayBuffer(96_000)), true);
   assert.equal(calls.length, 1);
-});
-
-test("enqueue failures report false without an app speaking decision", () => {
-  for (const port of [
-    null,
-    {},
-    {
-      postMessage() {
-        throw new Error("worklet unavailable");
-      },
-    },
-  ]) {
-    let state = "ready";
-    let result;
-    assert.doesNotThrow(() => {
-      result = enqueuePlaybackFrame(port, new ArrayBuffer(2));
-      if (result) state = "speaking";
-    });
-    assert.equal(result, false);
-    assert.equal(state, "ready");
-  }
 });
