@@ -509,12 +509,8 @@ fn validate_profiles(config: &Config) -> Result<(), String> {
         )?;
         config.voice_endpoint(profile)?;
         validate_credential_ref(config, profile.credential_ref.as_deref())?;
-        if matches!(
-            profile.provider_type,
-            VoiceProviderType::Openai | VoiceProviderType::Xai
-        ) && profile.credential_ref.is_none()
-        {
-            return Err("official voice profiles require a credentialRef".to_owned());
+        if profile.provider_type == VoiceProviderType::Openai && profile.credential_ref.is_none() {
+            return Err("official OpenAI voice profiles require a credentialRef".to_owned());
         }
     }
     for profile in &config.cleanup_profiles {
@@ -526,6 +522,20 @@ fn validate_profiles(config: &Config) -> Result<(), String> {
     config.summariser_endpoint()?;
     validate_credential_ref(config, config.summarisation.credential_ref.as_deref())?;
     Ok(())
+}
+
+impl Config {
+    /// Whether a named environment credential is the conventional xAI console API key.
+    #[must_use]
+    pub fn credential_is_xai_console_key(&self, reference: Option<&str>) -> bool {
+        self.secret_provider == "environment"
+            && reference.is_some_and(|reference| {
+                self.api_credentials.iter().any(|credential| {
+                    credential.id == reference
+                        && credential.environment_variable.as_deref() == Some("XAI_API_KEY")
+                })
+            })
+    }
 }
 
 fn validate_named_collection<'a>(

@@ -49,7 +49,8 @@ full live functionality; mock mode can start without them.
 - Node.js 26 or newer and pnpm 11.13.1 for repository tooling
 - Rust 1.97.0 through `rustup`
 - A working `paseo` CLI for session operations
-- An explicit API key for each configured official OpenAI or xAI Realtime profile
+- An explicit credential for each configured official OpenAI Realtime profile
+- A named API credential or the provider-owned Grok OAuth session for official xAI routes
 - An OpenAI-compatible chat-completions endpoint for optional reply summaries and dictation cleanup
 - Bitwarden Secrets Manager CLI, 1Password CLI, or process environment variables for secrets
 
@@ -133,9 +134,12 @@ default.
   password reference through `op read`.
 
 The provider-owned Grok OAuth store at `~/.grok/auth.json`, optionally overridden with
-`GROK_AUTH_FILE`, remains supported only for an exact `https://api.x.ai/v1` cleanup profile that has
-no resolved named credential. It is never eligible for xAI voice or fixed summarisation. Named API
-credential values and the OAuth token are never forwarded to secret-manager child processes.
+`GROK_AUTH_FILE`, is eligible only for exact official xAI voice, cleanup, and summarisation routes.
+The broker refreshes a near-expiry token through the exact xAI OAuth token endpoint and writes the
+refreshed provider session back to the same file. OAuth is preferred over a named environment
+credential whose configured variable is exactly `XAI_API_KEY`. Explicit Bitwarden, 1Password, and
+other named environment credentials remain operator overrides. Named credential values and OAuth
+tokens are never forwarded to secret-manager child processes.
 
 Secrets are resolved once at startup. Missing OpenAI credentials affect Realtime only; missing
 Paseo credentials disable Paseo tools without preventing the server from starting. Missing model

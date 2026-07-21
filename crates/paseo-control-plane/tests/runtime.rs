@@ -49,6 +49,9 @@ fn realtime_config(base_url: &str, model: &str) -> Config {
     if base_url == "wss://api.openai.com/v1/realtime" {
         profile.provider_type = VoiceProviderType::Openai;
         profile.credential_ref = Some("openai".to_owned());
+    } else if base_url.starts_with("wss://api.x.ai/v1/realtime") {
+        profile.provider_type = VoiceProviderType::Xai;
+        profile.credential_ref = Some("xai".to_owned());
     } else {
         profile.provider_type = VoiceProviderType::OpenaiCompatible;
         profile.credential_ref = None;
@@ -57,7 +60,7 @@ fn realtime_config(base_url: &str, model: &str) -> Config {
 }
 
 #[test]
-fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
+fn realtime_mode_requires_a_key_only_for_official_cloud_endpoints() {
     for (base_url, api_key, force_mock, expected) in [
         ("wss://api.openai.com/v1/realtime", None, false, "mock"),
         (
@@ -66,6 +69,9 @@ fn realtime_mode_requires_a_key_only_for_the_official_endpoint() {
             false,
             "real",
         ),
+        ("wss://api.x.ai/v1/realtime", None, false, "mock"),
+        ("wss://api.x.ai/v1/realtime", Some("key"), false, "real"),
+        ("wss://api.x.ai/v1/realtime/", Some("key"), false, "mock"),
         ("ws://127.0.0.1:8080/realtime", None, false, "real"),
         ("wss://realtime.example/v1/realtime", None, false, "real"),
         ("ws://127.0.0.1:8080/realtime", Some("key"), true, "mock"),

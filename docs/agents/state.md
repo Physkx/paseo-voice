@@ -13,7 +13,7 @@ This file holds current operational facts. Architecture belongs in `DECISIONS.md
 | Voice         | Named OpenAI, xAI, and compatible profiles; text-only mock mode remains available       |
 | Summaries     | Manual reads plus opt-in alpha polling announcements through the selected voice profile |
 | Cleanup model | Independently selected OpenAI-compatible profiles with raw-transcript fallback          |
-| Secrets       | Named API credentials, exact xAI cleanup OAuth, and separate Paseo authentication       |
+| Secrets       | Named API credentials, exact-route xAI OAuth, and separate Paseo authentication         |
 | Writes        | Provenance-bound proposal plus browser or deterministic console confirmation            |
 | Hosts         | Connection-scoped selector over trusted broker profiles                                 |
 | Persistence   | Runtime output is limited to content-free SQLite metadata and browser preferences       |

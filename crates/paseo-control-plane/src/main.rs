@@ -5,10 +5,18 @@ use std::process::ExitCode;
 
 use std::collections::HashMap;
 
+use paseo_control_plane::provider::model_route_credential;
 use paseo_control_plane::{
-    clock::SystemClock, config, console, dictation::HttpDictationCleaner,
-    paseo::SystemProcessExecutor, protocol::serve_stdio, realtime::SystemRealtimeConnector,
-    runtime, secrets::load_secrets, version_line,
+    clock::SystemClock,
+    config::{self, Config},
+    console,
+    dictation::HttpDictationCleaner,
+    paseo::SystemProcessExecutor,
+    protocol::serve_stdio,
+    realtime::SystemRealtimeConnector,
+    runtime,
+    secrets::{Secrets, load_secrets},
+    version_line,
 };
 
 #[tokio::main]
@@ -47,16 +55,26 @@ async fn main() -> ExitCode {
                 }
             };
             let secrets = load_secrets(&secret_config, &SystemProcessExecutor, &environment);
-            let default_voice_credential = config
-                .default_voice_profile()
-                .credential_ref
-                .as_ref()
-                .and_then(|id| secrets.api_credentials.get(id));
-            let summarisation_credential = config
-                .summarisation
-                .credential_ref
-                .as_ref()
-                .and_then(|id| secrets.api_credentials.get(id));
+            let default_voice_credential = paseo_control_plane::provider::voice_profile_credential(
+                config.default_voice_profile(),
+                &config,
+                &secrets.api_credentials,
+                secrets.grok_oauth_token.as_deref(),
+            );
+            let default_voice_credential_source = voice_credential_source(&config, &secrets);
+            let summarisation_credential = model_route_credential(
+                &config,
+                &secrets.api_credentials,
+                secrets.grok_oauth_token.as_deref(),
+                &config.summarisation.base_url,
+                config.summarisation.credential_ref.as_deref(),
+            );
+            let summarisation_credential_source = credential_source(
+                &config,
+                &secrets,
+                &config.summarisation.base_url,
+                config.summarisation.credential_ref.as_deref(),
+            );
             if matches!(config.log_level.as_str(), "debug" | "info") {
                 eprintln!(
                     "{}",
@@ -65,8 +83,9 @@ async fn main() -> ExitCode {
                         "event": "runtime_starting",
                         "mode": runtime::realtime_mode(
                             &config,
-                            default_voice_credential.map(String::as_str),
+                            default_voice_credential.as_deref(),
                         ),
+                        "voice_credential_source": default_voice_credential_source,
                         "paseo_tools": if secrets.paseo_password.is_some() {
                             "available"
                         } else {
@@ -77,30 +96,28 @@ async fn main() -> ExitCode {
                             "available"
                         } else {
                             "unavailable"
-                        }
+                        },
+                        "summarisation_credential_source": summarisation_credential_source
                     })
                 );
             }
             let result = if serve {
-                match runtime::build_model_http_client(summarisation_credential.map(String::as_str))
-                {
+                match runtime::build_model_http_client(summarisation_credential.as_deref()) {
                     Ok(http_client) => {
                         let address = format!("{}:{}", config.listen_host, config.listen_port);
                         match tokio::net::TcpListener::bind(&address).await {
                             Ok(listener) => {
                                 let mut dictation_cleaners = HashMap::new();
                                 for profile in &config.cleanup_profiles {
-                                    let credential = profile
-                                        .credential_ref
-                                        .as_ref()
-                                        .and_then(|id| secrets.api_credentials.get(id))
-                                        .or_else(|| {
-                                            (profile.base_url == "https://api.x.ai/v1")
-                                                .then_some(secrets.grok_oauth_token.as_ref())
-                                                .flatten()
-                                        });
+                                    let credential = model_route_credential(
+                                        &config,
+                                        &secrets.api_credentials,
+                                        secrets.grok_oauth_token.as_deref(),
+                                        &profile.base_url,
+                                        profile.credential_ref.as_deref(),
+                                    );
                                     let cleanup_client = match runtime::build_model_http_client(
-                                        credential.map(String::as_str),
+                                        credential.as_deref(),
                                     ) {
                                         Ok(client) => client,
                                         Err(error) => return finish_error(&error),
@@ -151,6 +168,50 @@ async fn main() -> ExitCode {
             eprintln!("usage: paseo-control-plane --version | --serve-stdio | serve | console");
             ExitCode::from(2)
         }
+    }
+}
+
+fn voice_credential_source(config: &Config, secrets: &Secrets) -> &'static str {
+    let profile = config.default_voice_profile();
+    let named = profile
+        .credential_ref
+        .as_ref()
+        .is_some_and(|id| secrets.api_credentials.contains_key(id));
+    if profile.provider_type == paseo_control_plane::config::VoiceProviderType::Xai
+        && (!named || config.credential_is_xai_console_key(profile.credential_ref.as_deref()))
+        && secrets.grok_oauth_token.is_some()
+    {
+        return "grok_subscription_oauth";
+    }
+    configured_credential_source(config, named)
+}
+
+fn credential_source(
+    config: &Config,
+    secrets: &Secrets,
+    base_url: &str,
+    credential_ref: Option<&str>,
+) -> &'static str {
+    let named = credential_ref
+        .and_then(|id| secrets.api_credentials.get(id))
+        .is_some();
+    if base_url == "https://api.x.ai/v1"
+        && (!named || config.credential_is_xai_console_key(credential_ref))
+        && secrets.grok_oauth_token.is_some()
+    {
+        return "grok_subscription_oauth";
+    }
+    configured_credential_source(config, named)
+}
+
+fn configured_credential_source(config: &Config, named: bool) -> &'static str {
+    if !named {
+        return "unavailable";
+    }
+    match config.secret_provider.as_str() {
+        "bitwarden" => "bitwarden",
+        "onepassword" => "onepassword",
+        _ => "environment",
     }
 }
 

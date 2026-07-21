@@ -27,6 +27,7 @@ use crate::{
     dictation::DictationCleaner,
     journal::Journal,
     paseo::ProcessExecutor,
+    provider::voice_profile_credential,
     realtime::{self, RealtimeConnector},
     secrets::Secrets,
     tools::{ProposalPresentation, ToolEngine, parse_strict_json_object, proposal_frame},
@@ -78,7 +79,7 @@ struct AppState {
     mode: &'static str,
     config: Config,
     api_credentials: std::collections::HashMap<String, String>,
-    grok_oauth_available: bool,
+    grok_oauth_token: Option<String>,
     paseo_password: Option<String>,
     journal: Arc<Mutex<Journal>>,
     clock: Arc<dyn Clock>,
@@ -125,12 +126,13 @@ pub async fn serve(
     dependencies: RuntimeDependencies,
     listener: tokio::net::TcpListener,
 ) -> Result<(), String> {
-    let default_credential = config
-        .default_voice_profile()
-        .credential_ref
-        .as_ref()
-        .and_then(|id| secrets.api_credentials.get(id));
-    let mode = realtime_mode(&config, default_credential.map(String::as_str));
+    let default_credential = voice_profile_credential(
+        config.default_voice_profile(),
+        &config,
+        &secrets.api_credentials,
+        secrets.grok_oauth_token.as_deref(),
+    );
+    let mode = realtime_mode(&config, default_credential.as_deref());
     if let Some(parent) = config.journal_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("journal directory failed: {error}"))?;
@@ -146,12 +148,11 @@ pub async fn serve(
     journal
         .recover(0)
         .map_err(|error| format!("journal recovery failed: {error}"))?;
-    let grok_oauth_available = secrets.grok_oauth_token.is_some();
     let state = Arc::new(AppState {
         mode,
         config: config.clone(),
         api_credentials: secrets.api_credentials,
-        grok_oauth_available,
+        grok_oauth_token: secrets.grok_oauth_token,
         paseo_password: secrets.paseo_password,
         journal: Arc::new(Mutex::new(journal)),
         clock: dependencies.clock,
@@ -211,7 +212,7 @@ async fn browser_session(mut socket: WebSocket, state: Arc<AppState>) {
             socket,
             state.config.clone(),
             state.api_credentials.clone(),
-            state.grok_oauth_available,
+            state.grok_oauth_token.clone(),
             state.paseo_password.clone(),
             realtime::RealtimeDependencies {
                 journal: Arc::clone(&state.journal),
@@ -278,6 +279,7 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
         crate::provider::voice_profiles_frame(
             &state.config,
             &state.api_credentials,
+            state.grok_oauth_token.is_some(),
             &selected_voice_profile_id,
             true,
         ),
@@ -288,7 +290,7 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
         crate::provider::cleanup_profiles_frame(
             &state.config,
             &state.api_credentials,
-            state.grok_oauth_available,
+            state.grok_oauth_token.is_some(),
             &selected_cleanup_profile_id,
             true,
         ),
@@ -327,6 +329,7 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
                         crate::provider::voice_profiles_frame(
                             &state.config,
                             &state.api_credentials,
+                            state.grok_oauth_token.is_some(),
                             &selected_voice_profile_id,
                             true,
                         ),
@@ -337,7 +340,7 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
                         crate::provider::cleanup_profiles_frame(
                             &state.config,
                             &state.api_credentials,
-                            state.grok_oauth_available,
+                            state.grok_oauth_token.is_some(),
                             &selected_cleanup_profile_id,
                             active_dictation.is_none() && live_response_recording.is_none(),
                         ),
@@ -389,6 +392,7 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
                                 crate::provider::voice_profiles_frame(
                                     &state.config,
                                     &state.api_credentials,
+                                    state.grok_oauth_token.is_some(),
                                     &selected_voice_profile_id,
                                     true,
                                 ),
@@ -424,7 +428,7 @@ async fn mock_session(socket: WebSocket, state: Arc<AppState>) {
                                 crate::provider::cleanup_profiles_frame(
                                     &state.config,
                                     &state.api_credentials,
-                                    state.grok_oauth_available,
+                                    state.grok_oauth_token.is_some(),
                                     &selected_cleanup_profile_id,
                                     true,
                                 ),

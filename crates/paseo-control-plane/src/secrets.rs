@@ -39,7 +39,7 @@ pub struct SecretConfig {
 pub struct Secrets {
     /// Broker-only API credentials keyed by configured credential ID.
     pub api_credentials: HashMap<String, String>,
-    /// Provider-owned Grok OAuth token, restricted to exact xAI cleanup routes.
+    /// Provider-owned Grok OAuth token, restricted to exact official xAI routes.
     pub grok_oauth_token: Option<String>,
     /// Paseo credential, or none for read/write unavailable mode.
     pub paseo_password: Option<String>,
@@ -130,9 +130,63 @@ pub fn load_secrets<E: ProcessExecutor>(
     }
 }
 
-/// Load the broker-side Grok CLI OAuth session without exposing it to child processes.
+const GROK_TOKEN_ENDPOINT: &str = "https://auth.x.ai/oauth2/token";
+const GROK_REFRESH_SKEW_SECS: u64 = 300;
+
+/// Load and, when needed, refresh the broker-side Grok CLI OAuth session.
 fn read_grok_subscription_token(environment: &HashMap<String, String>) -> Option<String> {
-    let path = environment.get("GROK_AUTH_FILE").map_or_else(
+    let path = grok_auth_path(environment);
+    let text = fs::read_to_string(&path).ok()?;
+    let mut root: Value = serde_json::from_str(&text).ok()?;
+    let object = root.as_object_mut()?;
+    let entry_key = object.keys().next()?.clone();
+    let entry = object.get_mut(&entry_key)?.as_object_mut()?;
+    let access = entry
+        .get("key")
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)?;
+    let refresh = entry
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned);
+    let client_id = entry
+        .get("oidc_client_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned);
+
+    let needs_refresh =
+        refresh.is_some() && client_id.is_some() && oauth_access_needs_refresh(&access);
+    if !needs_refresh {
+        return Some(access);
+    }
+    let Some(refresh_token) = refresh else {
+        return Some(access);
+    };
+    let Some(client_id) = client_id else {
+        return Some(access);
+    };
+    let Some(refreshed) = refresh_grok_access_token(&client_id, &refresh_token) else {
+        return Some(access);
+    };
+    entry.insert(
+        "key".to_owned(),
+        Value::String(refreshed.access_token.clone()),
+    );
+    if let Some(next_refresh) = refreshed.refresh_token {
+        entry.insert("refresh_token".to_owned(), Value::String(next_refresh));
+    }
+    if let Some(expires_at) = refreshed.expires_at {
+        entry.insert("expires_at".to_owned(), Value::String(expires_at));
+    }
+    let _ = fs::write(&path, serde_json::to_vec_pretty(&root).ok()?);
+    Some(refreshed.access_token)
+}
+
+fn grok_auth_path(environment: &HashMap<String, String>) -> PathBuf {
+    environment.get("GROK_AUTH_FILE").map_or_else(
         || {
             environment.get("HOME").map_or_else(
                 || PathBuf::from("~/.grok/auth.json"),
@@ -140,16 +194,113 @@ fn read_grok_subscription_token(environment: &HashMap<String, String>) -> Option
             )
         },
         PathBuf::from,
-    );
-    let text = fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(&text).ok()?;
-    value.as_object()?.values().find_map(|entry| {
-        entry
-            .get("key")
-            .and_then(Value::as_str)
-            .filter(|key| !key.is_empty())
-            .map(str::to_owned)
-    })
+    )
+}
+
+struct RefreshedGrokToken {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: Option<String>,
+}
+
+fn oauth_access_needs_refresh(access_token: &str) -> bool {
+    let Some(exp) = jwt_exp_unix(access_token) else {
+        return true;
+    };
+    exp <= now_unix_secs().saturating_add(GROK_REFRESH_SKEW_SECS)
+}
+
+fn jwt_exp_unix(token: &str) -> Option<u64> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let payload = token.split('.').nth(1)?;
+    let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let value: Value = serde_json::from_slice(&decoded).ok()?;
+    value.get("exp")?.as_u64()
+}
+
+fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+fn expires_at_label(expires_in: u64) -> String {
+    format!("unix:{}", now_unix_secs().saturating_add(expires_in))
+}
+
+fn refresh_grok_access_token(client_id: &str, refresh_token: &str) -> Option<RefreshedGrokToken> {
+    let client_id = client_id.to_owned();
+    let refresh_token = refresh_token.to_owned();
+    let join = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        runtime.block_on(async move {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(20))
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .ok()?;
+            let body = format!(
+                "grant_type=refresh_token&refresh_token={}&client_id={}",
+                urlencoding_encode(&refresh_token),
+                urlencoding_encode(&client_id)
+            );
+            let response = client
+                .post(GROK_TOKEN_ENDPOINT)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(body)
+                .send()
+                .await
+                .ok()?;
+            if !response.status().is_success() {
+                return None;
+            }
+            let body: Value = response.json().await.ok()?;
+            let access_token = body.get("access_token")?.as_str()?.to_owned();
+            if access_token.is_empty() {
+                return None;
+            }
+            let refresh_token = body
+                .get("refresh_token")
+                .and_then(Value::as_str)
+                .filter(|token| !token.is_empty())
+                .map(str::to_owned);
+            let expires_at = body
+                .get("expires_in")
+                .and_then(Value::as_u64)
+                .map(expires_at_label);
+            Some(RefreshedGrokToken {
+                access_token,
+                refresh_token,
+                expires_at,
+            })
+        })
+    });
+    join.join().ok()?
+}
+
+fn urlencoding_encode(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
 }
 
 fn nonempty(value: Option<&String>) -> Option<String> {

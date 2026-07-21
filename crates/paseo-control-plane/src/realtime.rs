@@ -424,7 +424,7 @@ pub async fn run(
     mut browser: WebSocket,
     config: Config,
     api_credentials: HashMap<String, String>,
-    grok_oauth_available: bool,
+    grok_oauth_token: Option<String>,
     paseo_password: Option<String>,
     dependencies: RealtimeDependencies,
 ) {
@@ -432,8 +432,12 @@ pub async fn run(
     let mut selected_voice_profile_id = config.default_voice_profile().id.clone();
     let mut selected_cleanup_profile_id = config.default_cleanup_profile().id.clone();
     let mut provider_generation = 1_u64;
-    let mut provider_adapter =
-        ProviderAdapter::new(config.default_voice_profile(), &api_credentials);
+    let mut provider_adapter = ProviderAdapter::new(
+        config.default_voice_profile(),
+        &config,
+        &api_credentials,
+        grok_oauth_token.as_deref(),
+    );
     let Ok(request) = provider_adapter.connection_request(&config) else {
         send_error(&mut browser, "Realtime credential or endpoint unavailable").await;
         return;
@@ -540,6 +544,7 @@ pub async fn run(
         crate::provider::voice_profiles_frame(
             &config,
             &api_credentials,
+            grok_oauth_token.is_some(),
             &selected_voice_profile_id,
             false,
         ),
@@ -550,7 +555,7 @@ pub async fn run(
         crate::provider::cleanup_profiles_frame(
             &config,
             &api_credentials,
-            grok_oauth_available,
+            grok_oauth_token.is_some(),
             &selected_cleanup_profile_id,
             true,
         ),
@@ -1815,6 +1820,7 @@ pub async fn run(
                                      crate::provider::voice_profiles_frame(
                                          &config,
                                          &api_credentials,
+                                         grok_oauth_token.is_some(),
                                          &selected_voice_profile_id,
                                          connection_work_resolved && provider_session_ready,
                                      ),
@@ -1824,7 +1830,7 @@ pub async fn run(
                                      crate::provider::cleanup_profiles_frame(
                                          &config,
                                          &api_credentials,
-                                         grok_oauth_available,
+                                         grok_oauth_token.is_some(),
                                          &selected_cleanup_profile_id,
                                          dictation_recording.is_none()
                                              && pending_audio_commit.is_none()
@@ -1860,7 +1866,12 @@ pub async fn run(
                                 let Some(profile) = config.voice_profiles.iter().find(|profile| profile.id == profile_id) else {
                                     continue;
                                 };
-                                let next_adapter = ProviderAdapter::new(profile, &api_credentials);
+                                let next_adapter = ProviderAdapter::new(
+                                    profile,
+                                    &config,
+                                    &api_credentials,
+                                    grok_oauth_token.as_deref(),
+                                );
                                 let Ok(request) = next_adapter.connection_request(&config) else {
                                     send_error(&mut browser, "Selected voice profile is unavailable.").await;
                                     continue;
@@ -1948,6 +1959,7 @@ pub async fn run(
                                     crate::provider::voice_profiles_frame(
                                         &config,
                                         &api_credentials,
+                                        grok_oauth_token.is_some(),
                                         &selected_voice_profile_id,
                                         false,
                                     ),
@@ -1981,7 +1993,7 @@ pub async fn run(
                                     crate::provider::cleanup_profiles_frame(
                                         &config,
                                         &api_credentials,
-                                        grok_oauth_available,
+                                        grok_oauth_token.is_some(),
                                         &selected_cleanup_profile_id,
                                         true,
                                     ),

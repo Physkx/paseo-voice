@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
 use paseo_control_plane::{
-    config::{CleanupProfile, Config, VoiceProfile, VoiceProviderType},
-    provider::{ProviderAdapter, cleanup_profiles_frame, voice_profiles_frame},
+    config::{ApiCredentialConfig, CleanupProfile, Config, VoiceProfile, VoiceProviderType},
+    provider::{
+        ProviderAdapter, cleanup_profiles_frame, model_route_credential, voice_profiles_frame,
+    },
 };
 use serde_json::json;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
@@ -43,7 +45,9 @@ fn xai_request_uses_exact_endpoint_model_query_and_explicit_bearer() {
     };
     let adapter = ProviderAdapter::new(
         &config.voice_profiles[0],
+        &config,
         &HashMap::from([("voice-key".to_owned(), "xai-secret".to_owned())]),
+        None,
     );
     let request = adapter.connection_request(&config).expect("xAI request");
     assert_eq!(
@@ -77,7 +81,9 @@ fn xai_cumulative_transcription_is_normalized_as_replacement_text() {
     let xai = profile(VoiceProviderType::Xai, "wss://api.x.ai/v1/realtime");
     let adapter = ProviderAdapter::new(
         &xai,
+        &config,
         &HashMap::from([("voice-key".to_owned(), "secret".to_owned())]),
+        None,
     );
     let normalized = adapter
         .normalize_event(json!({
@@ -100,6 +106,44 @@ fn xai_cumulative_transcription_is_normalized_as_replacement_text() {
 }
 
 #[test]
+fn xai_voice_accepts_oauth_and_prefers_it_over_the_console_environment_key() {
+    let config = Config {
+        secret_provider: "environment".to_owned(),
+        api_credentials: vec![ApiCredentialConfig {
+            id: "voice-key".to_owned(),
+            bws_secret_id: None,
+            one_password_secret_ref: None,
+            environment_variable: Some("XAI_API_KEY".to_owned()),
+        }],
+        voice_profiles: vec![profile(
+            VoiceProviderType::Xai,
+            "wss://api.x.ai/v1/realtime",
+        )],
+        ..Config::default()
+    };
+    let adapter = ProviderAdapter::new(
+        &config.voice_profiles[0],
+        &config,
+        &HashMap::from([("voice-key".to_owned(), "console-key".to_owned())]),
+        Some("oauth-token"),
+    );
+    let request = adapter.connection_request(&config).expect("xAI request");
+    assert_eq!(
+        request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer oauth-token")
+    );
+
+    let mut oauth_profile = config.voice_profiles[0].clone();
+    oauth_profile.credential_ref = None;
+    let oauth_only =
+        ProviderAdapter::new(&oauth_profile, &config, &HashMap::new(), Some("oauth-only"));
+    assert!(oauth_only.connection_request(&config).is_ok());
+}
+
+#[test]
 fn compatible_keyless_loopback_gets_no_ambient_credential_and_keeps_strict_deletion() {
     let config = Config {
         voice_profiles: vec![profile(
@@ -112,13 +156,13 @@ fn compatible_keyless_loopback_gets_no_ambient_credential_and_keeps_strict_delet
         ("openai".to_owned(), "openai-secret".to_owned()),
         ("xai".to_owned(), "xai-secret".to_owned()),
     ]);
-    let adapter = ProviderAdapter::new(&config.voice_profiles[0], &credentials);
+    let adapter = ProviderAdapter::new(&config.voice_profiles[0], &config, &credentials, None);
     let request = adapter
         .connection_request(&config)
         .expect("compatible request");
     assert!(!request.headers().contains_key(AUTHORIZATION));
     assert!(adapter.capabilities().dictation_item_deletion);
-    let frame = voice_profiles_frame(&config, &credentials, "voice", true);
+    let frame = voice_profiles_frame(&config, &credentials, false, "voice", true);
     assert_eq!(frame["profiles"][0]["dictation_available"], true);
     let encoded = frame.to_string();
     assert!(!encoded.contains("127.0.0.1"));
@@ -150,4 +194,30 @@ fn exact_xai_cleanup_reports_oauth_availability_without_exposing_routing_data() 
     let encoded = configured.to_string();
     assert!(!encoded.contains("api.x.ai"));
     assert!(!encoded.contains("credential_ref"));
+}
+
+#[test]
+fn oauth_is_never_attached_to_a_non_xai_model_route() {
+    let config = Config::default();
+    assert_eq!(
+        model_route_credential(
+            &config,
+            &HashMap::new(),
+            Some("oauth-token"),
+            "https://models.example/v1",
+            None,
+        ),
+        None
+    );
+    assert_eq!(
+        model_route_credential(
+            &config,
+            &HashMap::new(),
+            Some("oauth-token"),
+            "https://api.x.ai/v1",
+            None,
+        )
+        .as_deref(),
+        Some("oauth-token")
+    );
 }

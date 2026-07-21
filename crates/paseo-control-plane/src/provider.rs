@@ -43,14 +43,15 @@ pub struct ProviderAdapter {
 }
 
 impl ProviderAdapter {
-    /// Bind one profile to only its explicitly referenced credential.
+    /// Bind one profile to only its named credential or exact xAI OAuth route.
     #[must_use]
-    pub fn new(profile: &VoiceProfile, credentials: &HashMap<String, String>) -> Self {
-        let credential = profile
-            .credential_ref
-            .as_ref()
-            .and_then(|id| credentials.get(id))
-            .cloned();
+    pub fn new(
+        profile: &VoiceProfile,
+        config: &Config,
+        credentials: &HashMap<String, String>,
+        grok_oauth_token: Option<&str>,
+    ) -> Self {
+        let credential = voice_profile_credential(profile, config, credentials, grok_oauth_token);
         let capabilities = match profile.provider_type {
             VoiceProviderType::Openai | VoiceProviderType::OpenaiCompatible => {
                 ProviderCapabilities {
@@ -167,6 +168,58 @@ impl ProviderAdapter {
     pub fn profile_id(&self) -> &str {
         &self.profile.id
     }
+
+    /// Whether this profile has the credential required by its provider.
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.credential.is_some()
+            || (self.profile.provider_type == VoiceProviderType::OpenaiCompatible
+                && self.profile.credential_ref.is_none())
+    }
+}
+
+/// Resolve only the credential permitted for one validated voice profile.
+#[must_use]
+#[allow(clippy::implicit_hasher)]
+pub fn voice_profile_credential(
+    profile: &VoiceProfile,
+    config: &Config,
+    credentials: &HashMap<String, String>,
+    grok_oauth_token: Option<&str>,
+) -> Option<String> {
+    let named_credential = profile
+        .credential_ref
+        .as_ref()
+        .and_then(|id| credentials.get(id))
+        .cloned();
+    if profile.provider_type == VoiceProviderType::Xai
+        && (named_credential.is_none()
+            || config.credential_is_xai_console_key(profile.credential_ref.as_deref()))
+    {
+        grok_oauth_token.map(str::to_owned).or(named_credential)
+    } else {
+        named_credential
+    }
+}
+
+/// Resolve only the credential permitted for one validated HTTP model route.
+#[must_use]
+#[allow(clippy::implicit_hasher)]
+pub fn model_route_credential(
+    config: &Config,
+    credentials: &HashMap<String, String>,
+    grok_oauth_token: Option<&str>,
+    base_url: &str,
+    credential_ref: Option<&str>,
+) -> Option<String> {
+    let named = credential_ref.and_then(|id| credentials.get(id)).cloned();
+    if base_url == "https://api.x.ai/v1"
+        && (named.is_none() || config.credential_is_xai_console_key(credential_ref))
+    {
+        grok_oauth_token.map(str::to_owned).or(named)
+    } else {
+        named
+    }
 }
 
 /// Browser-safe voice profile catalogue.
@@ -175,6 +228,7 @@ impl ProviderAdapter {
 pub fn voice_profiles_frame(
     config: &Config,
     credentials: &HashMap<String, String>,
+    grok_oauth_available: bool,
     selected_id: &str,
     switch_safe: bool,
 ) -> Value {
@@ -182,8 +236,13 @@ pub fn voice_profiles_frame(
         .voice_profiles
         .iter()
         .map(|profile| {
-            let adapter = ProviderAdapter::new(profile, credentials);
-            let configured = profile.credential_ref.is_none() || adapter.credential.is_some();
+            let adapter = ProviderAdapter::new(
+                profile,
+                config,
+                credentials,
+                grok_oauth_available.then_some("available"),
+            );
+            let configured = adapter.is_available();
             let location = config
                 .voice_endpoint(profile)
                 .map_or("unavailable", |endpoint| endpoint.location.label());

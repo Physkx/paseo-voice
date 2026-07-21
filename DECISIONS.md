@@ -104,12 +104,14 @@ Model-originated session creation requires separate task collection, proposal, a
 confirmation interactions. Rust supplies host, working directory, and provider/model from the
 selected profile. A validated `agentId` is required before the new session becomes current.
 
-### Grok subscription OAuth for xAI cleanup
+### Grok subscription OAuth for exact xAI routes
 
-An exact `https://api.x.ai/v1` dictation cleanup profile without a resolved named credential may use
-the provider-owned Grok CLI OAuth store at `~/.grok/auth.json`. That session is the same SuperGrok /
-grok.com login used by the Grok CLI. The token stays in memory, is never logged, and is not eligible
-for xAI voice or fixed reply summarisation.
+Exact official xAI voice, dictation cleanup, and reply summarisation routes may use the
+provider-owned Grok CLI OAuth store at `~/.grok/auth.json`. A near-expiry access token is refreshed
+only through the exact xAI OAuth token endpoint with a no-proxy, no-redirect client, then written
+back to the same provider-owned file. OAuth is preferred over an explicitly configured environment
+credential named `XAI_API_KEY`. Explicit Bitwarden, 1Password, and differently named environment
+credentials remain operator overrides. Tokens stay broker-only and are never logged.
 
 ### Connection-scoped voice and cleanup routing
 

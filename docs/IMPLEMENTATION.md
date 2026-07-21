@@ -189,8 +189,10 @@ One secret provider resolves the named API credential catalogue plus the separat
 
 Named credentials are resolved once into a bounded broker-only map keyed by credential ID. A
 profile receives only the credential it explicitly references. The Grok CLI OAuth store remains a
-separate optional fallback only for exact xAI dictation cleanup and is never used for voice or fixed
-summarisation.
+separate optional credential only for exact official xAI voice, cleanup, and summarisation routes.
+Near-expiry OAuth is refreshed through the exact xAI token endpoint. OAuth wins over an explicitly
+configured `XAI_API_KEY` environment credential, while secret-manager and other named credentials
+remain operator overrides.
 
 Paseo and Bitwarden receive narrow child environments. Paseo receives its password through the child
 environment, never an argument. Secret values and process output content are excluded from logs.
