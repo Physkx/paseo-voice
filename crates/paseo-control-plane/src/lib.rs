@@ -22,3 +22,4 @@ pub mod voice_mode;
 pub fn version_line() -> String {
     format!("paseo-control-plane {}", env!("CARGO_PKG_VERSION"))
 }
+mod auto_reply;

@@ -117,10 +117,20 @@ summary context. Only one request is retained per browser connection. A replacem
 bounded cleaned-tail fallback rather than overlapping requests. Speakable output is capped at 2,400
 Unicode characters.
 
+The opt-in automatic reply poller runs per live browser connection on a separate async task and uses
+the selected host's read-only Paseo adapter through `spawn_blocking`. The first successful session
+list is a baseline. A later non-idle to idle transition reads the bounded latest reply and sends it
+through an eight-entry in-memory channel. While Live Response is quiescent and no proposal awaits
+confirmation, Rust activates the reply provenance without advancing user interaction, publishes the
+bound dashboard context, and creates one out-of-band Realtime audio response. Its input is bounded to
+24,000 Unicode characters, its tools are disabled, and its instructions require a short spoken
+summary. Host changes reset the poll baseline. Dictation, active responses, and pending proposals
+delay consumption without weakening the write confirmation gate.
+
 Each connection's `SummaryQueue` stores reply identities and deterministic ordering only. An eligible
 graceful disconnect can return committed deduplication state to a shared in-memory snapshot for a
-later connection. Concurrent connection snapshots are independent and are not merged. Automatic
-population is not implemented, and queue state is lost when the broker exits.
+later connection. Concurrent connection snapshots are independent and are not merged, so concurrent
+automatic pollers may announce the same reply. Queue state is lost when the broker exits.
 
 ## Dictation
 

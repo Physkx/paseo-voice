@@ -113,7 +113,7 @@ pub async fn summarise(
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
-fn bounded_summariser_input(text: &str) -> String {
+pub(crate) fn bounded_summariser_input(text: &str) -> String {
     if text.chars().count() <= MAX_SUMMARISER_INPUT_CHARS {
         return text.to_owned();
     }

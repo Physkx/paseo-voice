@@ -19,7 +19,7 @@ The current application provides:
 
 - A browser dashboard with trusted Paseo host profiles, session selection, typed steering, and
   push-to-talk voice interaction.
-- Manual reading and optional summarisation of the latest agent reply. The reply becomes an
+- Manual reading and opt-in automatic announcement of the latest agent reply. The reply becomes an
   immutable response context tied to its source session.
 - Provenance-bound response proposals and broker-gated session creation. In the browser, only the
   explicit Confirm control can execute a proposal; the local console has a separate deterministic
@@ -31,11 +31,13 @@ The current application provides:
 - A content-free SQLite operation journal and conservative recovery for attempted writes.
 - A text-only mock browser runtime and deterministic local console.
 
-Automatic agent-completion detection is not implemented. Replies become actionable only after a
-manual read, and dictation also requires that active reply context. After a connection closes
-gracefully, the broker can give its committed content-free deduplication snapshot to a later
-connection. Concurrent connections keep independent snapshots, and no queue state survives a broker
-restart.
+When `autoReplyPollMs` is nonzero, each live browser connection polls its selected Paseo host and
+treats a visible non-idle to idle transition as a completed reply. It reads and binds that reply,
+then asks OpenAI Realtime to summarise and speak it with tools disabled. This is an alpha fallback:
+fast transitions may be missed, concurrent browsers may announce the same reply, and identical reply
+text is deduplicated by its synthetic digest. Manual reads remain available. After a connection
+closes gracefully, the broker can give its committed content-free deduplication snapshot to a later
+connection. No queue state survives a broker restart.
 
 ## Requirements
 
@@ -97,6 +99,9 @@ Rust.
 
 Paths are passed unchanged for expansion by the selected Paseo daemon. The legacy
 `PASEO_VOICE_PASEO_HOST` override changes the target of the configured default profile only.
+
+Set `autoReplyPollMs` to `1000` for the alpha automatic announcement fallback, or leave it at `0`
+to disable polling. The equivalent environment override is `PASEO_VOICE_AUTO_REPLY_POLL_MS`.
 
 ### Secrets
 
@@ -166,7 +171,7 @@ See [docs/RUST_SAFETY_CONTRACT.md](docs/RUST_SAFETY_CONTRACT.md) for the normati
 
 ## Current limits
 
-- No automatic reply-completion observer or automatic summary announcements
+- Automatic completion uses an opt-in status-polling heuristic until Paseo exposes stable markers
 - No exactly-once delivery claim until Paseo supports receiver-recognised idempotency
 - No authenticated remote broker transport or configured public web deployment
 - No durable transcript, summary, draft, response, or cancelled-proposal history

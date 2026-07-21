@@ -11,12 +11,12 @@ This file holds current operational facts. Architecture belongs in `DECISIONS.md
 | Backend       | One privileged Rust service beside the Paseo CLI                                       |
 | Browser       | Secret-free protocol-v2 dashboard with typed, live voice, and English dictation modes  |
 | Voice         | OpenAI Realtime or a configured custom endpoint; text-only mock mode remains available |
-| Summaries     | Manual reply reads with optional model summary and bounded local fallback              |
+| Summaries     | Manual reads plus opt-in alpha polling announcements through OpenAI Realtime           |
 | Writes        | Provenance-bound proposal plus browser or deterministic console confirmation           |
 | Hosts         | Connection-scoped selector over trusted broker profiles                                |
 | Persistence   | Runtime output is limited to content-free SQLite metadata and browser preferences      |
 | Summary queue | Per connection, with conditional sequential reconnect deduplication in broker memory   |
-| Main gap      | Automatic completion detection awaits a stable supported Paseo reply marker            |
+| Main gap      | Alpha polling still awaits a stable supported Paseo completion and reply marker        |
 
 The default listener is loopback. Same-origin browser checks exist, but application-level remote
 authentication and TLS termination do not. The broker is not approved for direct public or shared

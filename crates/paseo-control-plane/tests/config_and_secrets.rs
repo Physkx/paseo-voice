@@ -68,10 +68,15 @@ fn config_file_is_strict_and_environment_has_precedence() {
             "PASEO_VOICE_SECRET_PROVIDER".to_owned(),
             "environment".to_owned(),
         ),
+        (
+            "PASEO_VOICE_AUTO_REPLY_POLL_MS".to_owned(),
+            "1000".to_owned(),
+        ),
     ]);
     let loaded = config::load(&environment).expect("load configuration");
     assert_eq!(loaded.listen_port, 9000);
     assert_eq!(loaded.secret_provider, "environment");
+    assert_eq!(loaded.auto_reply_poll_ms, 1000);
     assert_eq!(loaded.proposal_ttl_ms, 500);
 
     std::fs::write(&path, r#"{"unknownDangerousSwitch":true}"#).expect("write invalid config");
@@ -96,6 +101,16 @@ fn config_file_is_strict_and_environment_has_precedence() {
         )]))
         .expect_err("ambiguous boolean rejected"),
         "PASEO_VOICE_MOCK is invalid"
+    );
+
+    std::fs::write(&path, r#"{"autoReplyPollMs":249}"#).expect("write invalid config");
+    assert_eq!(
+        config::load(&HashMap::from([(
+            "PASEO_VOICE_CONFIG".to_owned(),
+            path.to_string_lossy().into_owned(),
+        )]))
+        .expect_err("unsafe polling interval rejected"),
+        "auto reply poll interval must be zero or between 250 and 60000 ms"
     );
 }
 

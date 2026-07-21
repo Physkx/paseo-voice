@@ -107,6 +107,27 @@ fn uncertain_engine(
 }
 
 #[test]
+fn polled_reply_activates_once_without_advancing_a_user_interaction() {
+    let executor = FakeExecutor {
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut tools = engine(&executor);
+
+    let result = tools
+        .activate_polled_reply("thread-a", "Agent A", "completed reply", 1)
+        .expect("new polled reply");
+    assert_eq!(result["spoken_text"], "completed reply");
+    assert_eq!(result["respondable"], true);
+    assert!(tools.presentation_snapshot()["bound_context"].is_object());
+    assert!(executor.calls.lock().expect("calls lock").is_empty());
+
+    assert_eq!(
+        tools.activate_polled_reply("thread-a", "Agent A", "completed reply", 2),
+        None
+    );
+}
+
+#[test]
 fn a_reconnecting_engine_keeps_dedup_but_inherits_no_active_context() {
     let executor = FakeExecutor {
         calls: Mutex::new(Vec::new()),

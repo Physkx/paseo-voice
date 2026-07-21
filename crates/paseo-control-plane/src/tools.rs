@@ -666,6 +666,27 @@ impl<E: ProcessExecutor> ToolEngine<E> {
         true
     }
 
+    /// Activate one read-only reply discovered by the opt-in completion poller.
+    pub fn activate_polled_reply(
+        &mut self,
+        session_id: &str,
+        session_name: &str,
+        text: &str,
+        now_ms: u64,
+    ) -> Option<Value> {
+        if text.is_empty() || ThreadId::new(session_id.to_owned()).is_err() {
+            return None;
+        }
+        let result = self.activate_reply(
+            session_id,
+            &bounded_display(session_name, 128, "(untitled)"),
+            text,
+            "summary",
+            now_ms,
+        );
+        (result.get("respondable").and_then(Value::as_bool) == Some(true)).then_some(result)
+    }
+
     /// Select a host for this connection and invalidate every host-bound action.
     #[must_use]
     pub fn select_host(&mut self, host_id: &str) -> Value {
@@ -1060,11 +1081,22 @@ impl<E: ProcessExecutor> ToolEngine<E> {
         if text.is_empty() {
             return json!({"ok": true, "spoken_text": "No readable reply yet.", "respondable": false});
         }
+        self.activate_reply(&session.id, &session.name, &text, mode, now_ms)
+    }
+
+    fn activate_reply(
+        &mut self,
+        session_id: &str,
+        session_name: &str,
+        text: &str,
+        mode: &str,
+        now_ms: u64,
+    ) -> Value {
         let summary_id = SummaryId::new(format!("summary-{}", Uuid::new_v4()))
             .expect("generated summary ID is valid");
-        let thread_id = ThreadId::new(session.id.clone()).expect("validated session ID");
+        let thread_id = ThreadId::new(session_id.to_owned()).expect("validated session ID");
         let host_id = &self.hosts[self.selected_host].profile.id;
-        let reply_id = synthetic_reply_id(host_id, &session.id, &text);
+        let reply_id = synthetic_reply_id(host_id, session_id, text);
         let observed = self.safety.apply(Command::ObserveReply {
             summary_id: summary_id.clone(),
             source_thread_id: thread_id.clone(),
@@ -1072,7 +1104,7 @@ impl<E: ProcessExecutor> ToolEngine<E> {
             observed_at_ms: now_ms,
         });
         if observed == Ok(Applied::DuplicateReply) {
-            return self.duplicate_reply_result(&reply_id, &session.id);
+            return self.duplicate_reply_result(&reply_id, session_id);
         }
         if observed.is_err() {
             return error("provenance_transition_rejected");
@@ -1090,17 +1122,17 @@ impl<E: ProcessExecutor> ToolEngine<E> {
         {
             return error("provenance_transition_rejected");
         }
-        self.selected = Some((session.id.clone(), session.name.clone()));
+        self.selected = Some((session_id.to_owned(), session_name.to_owned()));
         self.active = Some(ActiveContext {
             summary_id,
             reply_id,
-            title: session.name,
-            thread_id: session.id.clone(),
-            latest_summary: bounded_display(&crate::summarise::clean_for_speech(&text), 600, ""),
+            title: session_name.to_owned(),
+            thread_id: session_id.to_owned(),
+            latest_summary: bounded_display(&crate::summarise::clean_for_speech(text), 600, ""),
             summary_degraded: false,
         });
         json!({
-            "ok": true, "session_id": session.id, "spoken_text": text,
+            "ok": true, "session_id": session_id, "spoken_text": text,
             "respondable": true, "mode": mode
         })
     }

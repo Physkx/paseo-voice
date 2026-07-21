@@ -8,6 +8,7 @@
   "sparkModel": "qwen3.5-9b-instruct-nvfp4",
   "summariseThresholdChars": 700,
   "logTailEntries": 40,
+  "autoReplyPollMs": 1000,
   "proposalTtlMs": 120000,
   "paseoHosts": [
     {

@@ -2695,6 +2695,41 @@ fn write_single_reply_paseo(
     path
 }
 
+#[cfg(unix)]
+fn write_polled_reply_paseo(
+    directory: &tempfile::TempDir,
+    file_name: &str,
+    reply: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let path = directory.path().join(file_name);
+    let completion_marker = directory.path().join("reply-complete");
+    std::fs::write(
+        &path,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "case \"$1\" in\n",
+                "  ls) if [ -f '{}' ]; then status=idle; else status=running; fi; ",
+                "printf '[{{\"id\":\"thread-a\",\"shortId\":\"a\",\"name\":\"Session A\",\"status\":\"%s\"}}]\\n' \"$status\" ;;\n",
+                "  logs) printf '%s\\n' '{}' ;;\n",
+                "  *) printf '%s\\n' '[]' ;;\n",
+                "esac\n"
+            ),
+            completion_marker.display(),
+            reply
+        ),
+    )
+    .expect("write fake polling Paseo executable");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("fake polling Paseo metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&path, permissions).expect("fake polling Paseo permissions");
+    (path, completion_marker)
+}
+
 async fn start_live_realtime_browser(realtime_port: u16) -> LiveRealtimeRuntime {
     start_live_realtime_browser_with_paseo(realtime_port, None).await
 }
@@ -2732,6 +2767,22 @@ async fn start_live_realtime_browser_with_cleanup(
     .await
 }
 
+#[cfg(unix)]
+async fn start_live_realtime_browser_with_auto_reply(
+    realtime_port: u16,
+    paseo_bin: &std::path::Path,
+) -> LiveRealtimeRuntime {
+    start_live_realtime_browser_with_protocol(
+        realtime_port,
+        Some(paseo_bin),
+        None,
+        None,
+        Some(250),
+        true,
+    )
+    .await
+}
+
 async fn start_live_realtime_browser_with_model(
     realtime_port: u16,
     paseo_bin: Option<&std::path::Path>,
@@ -2743,6 +2794,7 @@ async fn start_live_realtime_browser_with_model(
         paseo_bin,
         model_base_url,
         summarise_threshold_chars,
+        None,
         true,
     )
     .await
@@ -2753,6 +2805,7 @@ async fn start_live_realtime_browser_with_protocol(
     paseo_bin: Option<&std::path::Path>,
     model_base_url: Option<&str>,
     summarise_threshold_chars: Option<u64>,
+    auto_reply_poll_ms: Option<u64>,
     initialize_browser: bool,
 ) -> LiveRealtimeRuntime {
     let app_port = TcpListener::bind("127.0.0.1:0")
@@ -2783,6 +2836,9 @@ async fn start_live_realtime_browser_with_protocol(
     }
     if let Some(summarise_threshold_chars) = summarise_threshold_chars {
         config["summariseThresholdChars"] = Value::from(summarise_threshold_chars);
+    }
+    if let Some(auto_reply_poll_ms) = auto_reply_poll_ms {
+        config["autoReplyPollMs"] = Value::from(auto_reply_poll_ms);
     }
     std::fs::write(&config_path, config.to_string()).expect("write config");
     let mut command = Command::new(env!("CARGO_BIN_EXE_paseo-control-plane"));
@@ -2825,6 +2881,112 @@ async fn start_live_realtime_browser_with_protocol(
         _guard: guard,
         browser,
     }
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn completed_paseo_reply_is_automatically_summarised_by_realtime() {
+    let paseo_directory = tempfile::tempdir().expect("fake Paseo directory");
+    let (fake_paseo_path, completion_marker) = write_polled_reply_paseo(
+        &paseo_directory,
+        "fake-paseo-auto-reply",
+        "The build passed. No blockers remain.",
+    );
+    let realtime_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("fake Realtime listener");
+    let realtime_port = realtime_listener
+        .local_addr()
+        .expect("Realtime address")
+        .port();
+    let fake_realtime = tokio::spawn(async move {
+        let (stream, _) = realtime_listener.accept().await.expect("Realtime accept");
+        let mut socket = accept_async(stream).await.expect("Realtime handshake");
+        assert_eq!(
+            next_fake_realtime_json(&mut socket, "session update").await["type"],
+            "session.update"
+        );
+        socket
+            .send(Message::Text(
+                json!({"type":"session.updated"}).to_string().into(),
+            ))
+            .await
+            .expect("send session ready");
+
+        let request = loop {
+            let event = next_fake_realtime_json(&mut socket, "automatic summary request").await;
+            if event["type"] == "response.create" {
+                break event;
+            }
+        };
+        assert_eq!(
+            request.pointer("/response/conversation"),
+            Some(&json!("none"))
+        );
+        assert_eq!(
+            request.pointer("/response/metadata/kind"),
+            Some(&json!("automatic_summary"))
+        );
+        assert_eq!(
+            request.pointer("/response/input/0/content/0/text"),
+            Some(&json!("The build passed. No blockers remain."))
+        );
+        assert_eq!(
+            request.pointer("/response/output_modalities"),
+            Some(&json!(["audio"]))
+        );
+        assert_eq!(request.pointer("/response/tools"), Some(&json!([])));
+        assert_eq!(
+            request.pointer("/response/tool_choice"),
+            Some(&json!("none"))
+        );
+
+        for event in [
+            json!({"type":"response.created","response":{"id":"automatic-summary-response"}}),
+            json!({
+                "type":"response.output_audio_transcript.done",
+                "response_id":"automatic-summary-response",
+                "transcript":"The build passed with no blockers."
+            }),
+            json!({
+                "type":"response.done",
+                "response":{"id":"automatic-summary-response","status":"completed"}
+            }),
+        ] {
+            socket
+                .send(Message::Text(event.to_string().into()))
+                .await
+                .expect("complete automatic summary response");
+        }
+    });
+
+    let mut runtime =
+        start_live_realtime_browser_with_auto_reply(realtime_port, &fake_paseo_path).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    std::fs::write(&completion_marker, b"complete").expect("mark reply complete");
+
+    let mut bound = false;
+    let mut spoken = false;
+    for _ in 0..12 {
+        let frame = tokio::time::timeout(
+            Duration::from_secs(2),
+            next_browser_json(&mut runtime.browser, "automatic reply browser frame"),
+        )
+        .await
+        .expect("automatic reply frame timeout");
+        if frame["type"] == "dashboard_state" && frame["bound_context"].is_object() {
+            bound = true;
+        }
+        if frame["type"] == "transcript_done"
+            && frame["text"] == "The build passed with no blockers."
+        {
+            spoken = true;
+            break;
+        }
+    }
+    assert!(bound, "automatic reply context was not published");
+    assert!(spoken, "automatic reply was not spoken");
+    fake_realtime.await.expect("fake Realtime task");
 }
 
 #[allow(dead_code)]
@@ -24499,7 +24661,8 @@ async fn browser_controls_require_an_exact_v2_hello() {
     });
 
     let mut runtime =
-        start_live_realtime_browser_with_protocol(realtime_port, None, None, None, false).await;
+        start_live_realtime_browser_with_protocol(realtime_port, None, None, None, None, false)
+            .await;
     assert!(
         tokio::time::timeout(Duration::from_millis(100), &mut ready_receiver)
             .await
@@ -24553,7 +24716,8 @@ async fn incompatible_browser_protocol_closes_the_realtime_session() {
         .expect("Realtime address")
         .port();
     let mut runtime =
-        start_live_realtime_browser_with_protocol(realtime_port, None, None, None, false).await;
+        start_live_realtime_browser_with_protocol(realtime_port, None, None, None, None, false)
+            .await;
     runtime
         .browser
         .send(Message::Text(

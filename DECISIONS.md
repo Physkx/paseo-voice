@@ -113,11 +113,21 @@ to the host, summary, draft value, and selection captured at recording start. A 
 explicit review; a stale host or summary discards the result. Dictation provider items are deleted
 before the connection returns to reusable conversation state.
 
-### Manual observation and sequential reconnect deduplication
+### Alpha automatic observation and sequential reconnect deduplication
 
-Manual `read_latest_reply` calls are the only approved source of actionable reply contexts until
-Paseo exposes a supported stable completion marker. Polling undocumented state transitions is not an
-approved production trigger.
+When explicitly enabled with a bounded polling interval, each live browser connection may use an
+alpha read-only completion heuristic until Paseo exposes a supported stable marker. A separate
+poller baselines the selected host's current session states, observes a later non-idle to idle
+transition, reads that session's latest reply, and submits one bounded out-of-band response to OpenAI
+Realtime. That response has tools disabled, does not enter the default provider conversation, and
+instructs Realtime to summarise and speak only the supplied agent output.
+
+The heuristic may miss transitions completed between polls, may announce the same completion in
+concurrent browsers, and cannot distinguish identical consecutive reply text because the interim
+reply identity remains a host, session, and content digest. The poller runs outside the transport and
+tool-engine ownership loops, retains only content-free session status between polls, and uses a
+bounded in-memory reply channel. Automatic observation never advances trusted user interaction and
+cannot confirm or execute a write. The proposal and explicit browser confirmation gate is unchanged.
 
 Each browser connection has its own content-free summary queue and at most one active context. On an
 eligible graceful close, the connection returns its committed snapshot to a broker-owned in-memory
@@ -143,5 +153,6 @@ configuration or runtime content.
 - Per-profile credentials and editable new-session defaults remain deferred.
 - Any durable user content or correction learning requires an explicit retention and deletion
   policy.
+- Replace alpha status polling with a stable Paseo completion and reply marker.
 - A system-wide desktop companion requires a separate process, authentication, focus, clipboard,
   hotkey, packaging, and update design.

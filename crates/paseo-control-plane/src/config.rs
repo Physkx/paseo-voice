@@ -84,6 +84,8 @@ pub struct Config {
     pub summarise_threshold_chars: usize,
     /// Recent Paseo log entries inspected for a reply.
     pub log_tail_entries: usize,
+    /// Opt-in alpha interval for automatic reply polling; zero disables it.
+    pub auto_reply_poll_ms: u64,
     /// Proposal lifetime.
     pub proposal_ttl_ms: u64,
     /// Paseo executable.
@@ -131,6 +133,7 @@ impl Default for Config {
             spark_model: "qwen3.5-9b-instruct-nvfp4".to_owned(),
             summarise_threshold_chars: 700,
             log_tail_entries: 40,
+            auto_reply_poll_ms: 0,
             proposal_ttl_ms: 120_000,
             paseo_bin: "paseo".to_owned(),
             paseo_hosts: default_paseo_hosts(),
@@ -157,6 +160,7 @@ impl Default for Config {
 ///
 /// Returns a bounded message for malformed configuration.
 #[allow(clippy::implicit_hasher)]
+#[allow(clippy::too_many_lines)]
 pub fn load(environment: &HashMap<String, String>) -> Result<Config, String> {
     if environment.contains_key("PASEO_VOICE_DEV") {
         return Err("PASEO_VOICE_DEV was removed; select the environment provider".to_owned());
@@ -230,6 +234,11 @@ pub fn load(environment: &HashMap<String, String>) -> Result<Config, String> {
     )?;
     config.log_tail_entries =
         number_override(environment, "PASEO_VOICE_LOG_TAIL", config.log_tail_entries)?;
+    config.auto_reply_poll_ms = number_override(
+        environment,
+        "PASEO_VOICE_AUTO_REPLY_POLL_MS",
+        config.auto_reply_poll_ms,
+    )?;
     if let Some(value) = environment.get("PASEO_VOICE_MOCK") {
         config.force_mock = match value.to_lowercase().as_str() {
             "1" | "true" => true,
@@ -245,6 +254,9 @@ pub fn load(environment: &HashMap<String, String>) -> Result<Config, String> {
     }
     if config.log_tail_entries == 0 || config.log_tail_entries > 200 {
         return Err("log tail must be between 1 and 200".to_owned());
+    }
+    if config.auto_reply_poll_ms != 0 && !(250..=60_000).contains(&config.auto_reply_poll_ms) {
+        return Err("auto reply poll interval must be zero or between 250 and 60000 ms".to_owned());
     }
     if !matches!(
         config.log_level.as_str(),
