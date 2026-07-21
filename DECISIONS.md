@@ -106,12 +106,14 @@ Model-originated session creation requires separate task collection, proposal, a
 confirmation interactions. Rust supplies host, working directory, and provider/model from the
 selected profile. A validated `agentId` is required before the new session becomes current.
 
-### Grok subscription OAuth for model cleanup
+### Grok subscription OAuth preferred over console API keys
 
-The summariser and dictation-cleanup model bearer may be taken from the provider-owned Grok CLI
-OAuth store at `~/.grok/auth.json` after `PASEO_VOICE_SPARK_API_KEY` and `XAI_API_KEY`. That session
-is the same SuperGrok / grok.com login used by the Grok CLI. Tokens stay in memory only and are never
-logged.
+The model / xAI bearer (Realtime on official xAI, plus summarisation and dictation cleanup) prefers
+the provider-owned Grok CLI OAuth store at `~/.grok/auth.json` after any explicit
+`PASEO_VOICE_SPARK_API_KEY`. That OIDC session is the SuperGrok / grok.com subscription used by the
+Grok CLI. Near-expiry access tokens are refreshed against `https://auth.x.ai/oauth2/token` and
+written back to the store. `XAI_API_KEY` remains a secondary pay-per-token console fallback for
+public operators who do not use subscription OAuth. Tokens are never logged.
 
 ### Multi-provider Realtime (OpenAI and xAI)
 

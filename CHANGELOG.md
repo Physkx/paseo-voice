@@ -2,6 +2,10 @@
 
 All notable project changes are recorded here.
 
+## [0.3.1] - 2026-07-21
+
+- **Secrets**: Prefer Grok subscription OAuth over API keys
+
 ## [0.3.0] - 2026-07-21
 
 - **Realtime**: Grok Voice Realtime with OpenAI still supported

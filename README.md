@@ -113,12 +113,13 @@ Select one provider for the process with `secretProvider` or
 `PASEO_VOICE_SECRET_PROVIDER`: `bitwarden`, `onepassword`, or `environment`. Bitwarden is the
 default.
 
-- `environment` reads `OPENAI_API_KEY`, `PASEO_PASSWORD`, and the model bearer from
-  `PASEO_VOICE_SPARK_API_KEY`, then `XAI_API_KEY`, then the provider-owned Grok OAuth store at
-  `~/.grok/auth.json` (override with `GROK_AUTH_FILE`). That store is the same session used by the
-  Grok CLI after `grok` login on a SuperGrok / grok.com subscription. Start from
-  [.env.example](.env.example) and load other secrets through your shell or secret manager; the
-  application does not load `.env` files.
+- `environment` reads `OPENAI_API_KEY`, `PASEO_PASSWORD`, and the model / xAI bearer in this order:
+  1. `PASEO_VOICE_SPARK_API_KEY` (explicit operator override),
+  2. **Grok subscription OAuth** from `~/.grok/auth.json` after `grok` login (SuperGrok /
+     grok.com; override path with `GROK_AUTH_FILE`; near-expiry tokens are refreshed and written
+     back so usage stays on the subscription, not a console API key),
+  3. `XAI_API_KEY` only as a pay-per-token console API fallback when no subscription session exists.
+     Start from [.env.example](.env.example). The application does not load `.env` files.
 - `bitwarden` reads a Secrets Manager token from `~/.config/bws.env` and resolves the configured
   `bwsSecretIdOpenai`, `bwsSecretIdPaseo`, and optional `bwsSecretIdSpark` values.
 - `onepassword` resolves the configured `onePasswordSecretRefOpenai`, `onePasswordSecretRefPaseo`,
@@ -167,8 +168,9 @@ Configure any OpenAI-compatible chat-completions base URL with `sparkBaseUrl` /
 ```
 
 With `secretProvider: "environment"` and an active `grok` login, `~/.grok/auth.json` supplies the
-xAI bearer for both Realtime and cleanup. OpenAI-only operators keep the official OpenAI Realtime
-URL and `OPENAI_API_KEY` without changing other fields.
+**subscription OAuth bearer** for both Realtime and cleanup. That path is preferred over
+`XAI_API_KEY` so SuperGrok usage is not billed as console API spend. OpenAI-only operators keep the
+official OpenAI Realtime URL and `OPENAI_API_KEY` without changing other fields.
 
 ### Endpoint policy
 

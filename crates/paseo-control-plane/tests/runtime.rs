@@ -79,6 +79,7 @@ fn realtime_credential_prefers_xai_model_key_on_official_xai_endpoint() {
         openai_api_key: Some("openai-only".to_owned()),
         spark_api_key: Some("xai-model".to_owned()),
         paseo_password: None,
+        model_credential_source: None,
     };
     assert_eq!(
         realtime_credential(&config, &secrets).as_deref(),
@@ -1292,6 +1293,7 @@ async fn start_injected_realtime_browser_with_hosts_process_and_cleaner(
                 openai_api_key: api_key,
                 spark_api_key: None,
                 paseo_password,
+                model_credential_source: None,
             },
             RuntimeDependencies {
                 clock: Arc::new(SystemClock::start()),
@@ -25697,6 +25699,7 @@ async fn panicking_dictation_cleanup_emits_correlated_failure_and_ready() {
                 openai_api_key: Some("test-key".to_owned()),
                 spark_api_key: None,
                 paseo_password: Some("test-password".to_owned()),
+                model_credential_source: None,
             },
             RuntimeDependencies {
                 clock: std::sync::Arc::new(SystemClock::start()),

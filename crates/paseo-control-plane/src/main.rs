@@ -98,7 +98,8 @@ fn log_runtime_starting(config: &config::Config, secrets: &Secrets) {
                 "available"
             } else {
                 "unavailable"
-            }
+            },
+            "model_credential_source": secrets.model_credential_source.unwrap_or("none")
         })
     );
 }

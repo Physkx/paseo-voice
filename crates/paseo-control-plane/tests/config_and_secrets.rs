@@ -557,16 +557,17 @@ fn environment_provider_accepts_xai_api_key_alias_for_model_endpoint() {
         onepassword_paseo_ref: None,
         onepassword_spark_ref: None,
     };
-    let environment = HashMap::from([("XAI_API_KEY".to_owned(), "xai-sub-key".to_owned())]);
+    let environment = HashMap::from([("XAI_API_KEY".to_owned(), "xai-api-key".to_owned())]);
     let secrets = load_secrets(&config, &executor, &environment);
-    assert_eq!(secrets.spark_api_key.as_deref(), Some("xai-sub-key"));
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("xai-api-key"));
+    assert_eq!(secrets.model_credential_source, Some("env_xai_api_key"));
 
     let environment = HashMap::from([
         (
             "PASEO_VOICE_SPARK_API_KEY".to_owned(),
             "dedicated-model-key".to_owned(),
         ),
-        ("XAI_API_KEY".to_owned(), "xai-sub-key".to_owned()),
+        ("XAI_API_KEY".to_owned(), "xai-api-key".to_owned()),
     ]);
     let secrets = load_secrets(&config, &executor, &environment);
     assert_eq!(
@@ -574,6 +575,7 @@ fn environment_provider_accepts_xai_api_key_alias_for_model_endpoint() {
         Some("dedicated-model-key"),
         "dedicated spark key wins over XAI_API_KEY"
     );
+    assert_eq!(secrets.model_credential_source, Some("env_spark"));
 }
 
 #[test]
@@ -607,7 +609,52 @@ fn environment_provider_reads_grok_subscription_auth_store() {
     )]);
     let secrets = load_secrets(&config, &executor, &environment);
     assert_eq!(secrets.spark_api_key.as_deref(), Some("oidc-access-token"));
+    assert_eq!(
+        secrets.model_credential_source,
+        Some("grok_subscription_oauth")
+    );
     assert!(executor.calls.lock().expect("calls lock").is_empty());
+}
+
+#[test]
+fn grok_subscription_oauth_is_preferred_over_xai_api_key() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let auth_path = directory.path().join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{"https://auth.x.ai::client":{"key":"subscription-token","auth_mode":"oidc","expires_at":"2099-01-01T00:00:00Z","refresh_token":"refresh","oidc_client_id":"client"}}"#,
+    )
+    .expect("write grok auth store");
+    let executor = FakeExecutor {
+        outputs: Mutex::default(),
+        calls: Mutex::default(),
+    };
+    let config = SecretConfig {
+        provider: SecretProvider::Environment,
+        bws_binary: "bws".to_owned(),
+        bws_env_file: "unused".into(),
+        bws_openai_id: None,
+        bws_paseo_id: None,
+        bws_spark_id: None,
+        onepassword_binary: "op".to_owned(),
+        onepassword_openai_ref: None,
+        onepassword_paseo_ref: None,
+        onepassword_spark_ref: None,
+    };
+    let environment = HashMap::from([
+        (
+            "GROK_AUTH_FILE".to_owned(),
+            auth_path.to_string_lossy().into_owned(),
+        ),
+        ("XAI_API_KEY".to_owned(), "pay-per-token-key".to_owned()),
+    ]);
+    let secrets = load_secrets(&config, &executor, &environment);
+    assert_eq!(secrets.spark_api_key.as_deref(), Some("subscription-token"));
+    assert_eq!(
+        secrets.model_credential_source,
+        Some("grok_subscription_oauth"),
+        "subscription OAuth must win over console API keys"
+    );
 }
 
 #[test]
