@@ -27,7 +27,7 @@
     "console": "cargo run --release -p paseo-control-plane -- console"
   },
   "devDependencies": {
-    "oxlint": "^1.74.0",
+    "oxlint": "^1.75.0",
     "prettier": "3.9.5"
   }
 }
