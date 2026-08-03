@@ -8,11 +8,6 @@ paseo-workflow health --repair
 paseo-workflow project receipt
 ```
 
-Never use `/mnt/c/.../orca/projects/...` or other Windows/Orca copies. Follow the global
-`paseo-autonomous-workflow` skill. One writer, direct `main`, full-access providers from the
-routing manifest, scoped 1Password references, project validation, automatic commit/push, Obsidian
-writeback, and Qdrant re-indexing.
-
 Before validation for every successful project-changing task:
 
 ```sh
